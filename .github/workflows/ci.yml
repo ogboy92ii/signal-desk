@@ -1,0 +1,123 @@
+name: build
+
+on:
+  push:
+    branches: [main, 'mainnet/**']
+  pull_request:
+
+# Least privilege by default; only the job that signs the binary gets more.
+permissions:
+  contents: read
+
+# Third-party actions are pinned to a commit, not a tag: a tag can be moved to other code.
+# actions/checkout v4             11d5960a326750d5838078e36cf38b85af677262
+# actions/upload-artifact v4      ea165f8d65b6e75b540449e92b4886f43607fa02
+# actions/attest v4.2.2           1e69f48acb82d1966a394da916b4c1698aa569d6
+# Swatinem/rust-cache v2          d1527c8f67ef9af357290475d4af4b0fab8f12e0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Sigstore signing certificate for the attestation
+      attestations: write # store the attestation
+      artifact-metadata: write # artifact storage record
+    outputs:
+      sha256: ${{ steps.hash.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install the wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Test the commitment scheme
+        run: cargo test --lib --locked --verbose
+      - name: Build the template
+        run: cargo build --release --locked --target wasm32-unknown-unknown
+      - name: Lint
+        run: cargo clippy --release --locked --target wasm32-unknown-unknown -- -D warnings
+      - name: Report the artefact size
+        run: ls -l target/wasm32-unknown-unknown/release/signal_desk.wasm
+      - name: Refuse a binary that carries personal or secret data
+        run: python3 scripts/scan_binary.py target/wasm32-unknown-unknown/release/signal_desk.wasm
+      - name: Record the binary's sha256
+        id: hash
+        run: |
+          cd target/wasm32-unknown-unknown/release
+          sha256sum signal_desk.wasm | tee signal_desk.wasm.sha256
+          echo "sha256=$(cut -d' ' -f1 signal_desk.wasm.sha256)" >> "$GITHUB_OUTPUT"
+      - name: Publish the binary as a download
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: signal_desk-${{ github.sha }}
+          path: |
+            target/wasm32-unknown-unknown/release/signal_desk.wasm
+            target/wasm32-unknown-unknown/release/signal_desk.wasm.sha256
+          if-no-files-found: error
+      - name: Sign where the binary comes from (SLSA provenance, Sigstore)
+        if: github.event_name == 'push'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: target/wasm32-unknown-unknown/release/signal_desk.wasm
+
+  reproduce:
+    # A second, independent build from a clean checkout and no cache must give the same bytes.
+    # If it does not, the published hash would not be checkable by anyone else.
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install the wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Rebuild the template
+        run: cargo build --release --locked --target wasm32-unknown-unknown
+      - name: Compare with the build job
+        env:
+          EXPECTED: ${{ needs.build.outputs.sha256 }}
+        run: |
+          actual=$(sha256sum target/wasm32-unknown-unknown/release/signal_desk.wasm | cut -d' ' -f1)
+          echo "build job : $EXPECTED"
+          echo "rebuild   : $actual"
+          test -n "$EXPECTED" && test "$actual" = "$EXPECTED"
+
+  supply-chain:
+    # deny.toml: RustSec advisories, yanked versions, licences, crates.io as the only source,
+    # over every crate of the committed Cargo.lock. Then the crates compiled into the wasm must
+    # match the hand-reviewed list (reviewed-deps.txt), checksums included.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: cargo deny check
+        run: cargo deny check
+      - name: Crates in the wasm are the reviewed ones
+        run: python3 scripts/check_reviewed_deps.py
+
+  end-to-end:
+    # The desk's claims, played against a simulated Ootle ledger: sealed calls sell, open only as
+    # committed and only at expiry, unopened calls refund and count as lost, proceeds stay locked. Linux only — the engine pulls a Cranelift JIT that
+    # refuses to compile on Windows.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install the wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      - name: Play the life of a desk
+        run: cargo test --locked --no-fail-fast --test end_to_end --test desk_rules -- --nocapture
+
+  tari-lint:
+    # The official template linter (manifest, metadata and size checks). Clippy already runs above.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install the wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          # Never restore ~/.cargo/bin: the tari binary run below must come from this build.
+          cache-bin: false
+      - name: Install the tari CLI
+        run: cargo install tari-ootle-cli --version 0.33.0 --locked
+      - name: tari lint
+        run: tari lint --no-clippy

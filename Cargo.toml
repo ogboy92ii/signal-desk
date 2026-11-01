@@ -1,0 +1,40 @@
+[workspace]
+
+[package]
+name = "signal_desk"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "Verifiable crypto calls on the Tari Ootle: one desk per caller, an append-only registry of sealed calls, escrowed sales, public reveals and automatic refunds."
+
+[package.metadata.tari-template]
+tags = ["trading", "signals", "privacy", "commitment", "marketplace", "reputation"]
+category = "defi"
+documentation = "https://github.com/ogboy92ii/signal-desk#readme"
+homepage = "https://github.com/ogboy92ii/signal-desk"
+
+[dependencies]
+tari_template_lib = "0.36.0"
+tari_template_abi = "0.22.0"
+# Blake2b-256 in pure Rust, hashed inside the template, so the published crates alone reproduce the build.
+blake2 = { version = "0.10", default-features = false }
+minicbor = { version = "2.3", default-features = false, features = ["derive", "alloc"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[build-dependencies]
+tari_ootle_template_build = "0.17"
+
+# Integration tests only. They pull the Ootle engine, whose Cranelift JIT does not compile on Windows,
+# so `cargo test` runs in CI. The wasm build does not use any of this.
+[dev-dependencies]
+tari_template_test_tooling = "0.48"
+tari_template_lib_types = "0.36.0"

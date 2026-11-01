@@ -1,0 +1,49 @@
+# cargo-deny: supply-chain policy for every crate in Cargo.lock (the wasm and the test tooling).
+
+[advisories]
+version = 2
+# Known vulnerabilities always fail. Yanked versions fail too: a yank often means a bad release.
+yanked = "deny"
+# A crate flagged unmaintained fails when it is compiled into the template itself.
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# OSI-approved permissive licences seen in the dependency tree on 2026-11-01.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "ISC",
+    "Zlib",
+    "Unlicense",
+    "CC0-1.0",
+    "BSL-1.0",
+    "BlueOak-1.0.0",
+    "MPL-2.0",
+    "Unicode-3.0",
+]
+# Test tooling only (pulled by tari_engine), never compiled into the template.
+exceptions = [
+    { allow = ["WTFPL"], crate = "newtype-ops" },
+]
+
+[bans]
+# Two majors of syn coexist through the Tari macros; that is expected.
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io. A git or alternative-registry dependency is refused until reviewed.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
