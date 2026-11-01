@@ -78,7 +78,8 @@ pub fn reveal(test: &mut TemplateTest, desk: ComponentAddress, seq: u64, payload
         .finalize
         .events
         .iter()
-        .find(|e| e.topic() == "call_revealed")
+        // The engine prefixes custom topics with the template's module name.
+        .find(|e| e.topic().ends_with(".call_revealed"))
         .expect("reveal emits call_revealed");
     assert_eq!(event.payload().get_str("seq"), Some(seq.to_string().as_str()));
     event.payload().get_str("payload").expect("the event carries the payload").to_string()
