@@ -54,7 +54,8 @@ jobs:
             target/wasm32-unknown-unknown/release/signal_desk.wasm.sha256
           if-no-files-found: error
       - name: Sign where the binary comes from (SLSA provenance, Sigstore)
-        if: github.event_name == 'push'
+        # Free GitHub plans attest public repositories only: this step switches on when the repo goes public.
+        if: github.event_name == 'push' && !github.event.repository.private
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
           subject-path: target/wasm32-unknown-unknown/release/signal_desk.wasm
