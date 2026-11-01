@@ -1,5 +1,5 @@
 //! The life of one call on a desk: sealed, sold, opened only at expiry and only as committed, paid
-//! out only once open, and closed to sales afterwards.
+//! out only once open and only into the payout account, and closed to sales afterwards.
 
 mod common;
 
@@ -17,7 +17,6 @@ fn a_call_is_sold_sealed_then_opened_only_as_committed_and_paid_only_once_open()
     let seq = seal(&mut test, desk, PAYLOAD, REVEAL_AT);
     assert_eq!(seq, 0, "the first call of a desk is number 0");
     assert_eq!(test.call_method::<u64>(desk, "opened_at_epoch", args![], vec![]), 1, "the desk records its age");
-    assert!(test.call_method::<Option<String>>(desk, "payload", args![seq], vec![]).is_none());
 
     buy(&mut test, desk, seq);
     assert_eq!(test.call_method::<u64>(desk, "sold", args![seq], vec![]), 1);
@@ -44,21 +43,22 @@ fn a_call_is_sold_sealed_then_opened_only_as_committed_and_paid_only_once_open()
         .build_and_seal(&key);
     expect_reject(&mut test, wrong, vec![], "do not open this commitment");
 
-    test.call_method::<()>(desk, "reveal", args![seq, PAYLOAD.to_string(), Bytes::from_vec(NONCE.to_vec())], vec![]);
-    assert_eq!(test.call_method::<Option<String>>(desk, "payload", args![seq], vec![]).as_deref(), Some(PAYLOAD));
+    assert_eq!(reveal(&mut test, desk, seq, PAYLOAD), PAYLOAD, "the event publishes the call as committed");
     assert_eq!(test.call_method::<Option<u64>>(desk, "revealed_at_epoch", args![seq], vec![]), Some(REVEAL_AT));
     assert_eq!(test.call_method::<Amount>(desk, "withdrawable", args![], vec![]), Amount::from_u64(PRICE));
     assert_eq!(test.call_method::<(u64, u64, u64)>(desk, "stats", args![], vec![]), (1, 1, 0));
 
-    // The publisher is paid now.
-    let (account, account_proof, _) = test.create_empty_account();
-    let pay = test
+    // Opened once only.
+    let again = test
         .transaction()
-        .call_method(desk, "withdraw", args![Amount::from_u64(PRICE)])
-        .put_last_instruction_output_on_workspace("money")
-        .call_method(account, "deposit", args![Workspace("money")])
+        .call_method(desk, "reveal", args![seq, PAYLOAD.to_string(), Bytes::from_vec(NONCE.to_vec())])
         .build_and_seal(&key);
-    test.execute_expect_success(pay, vec![account_proof]);
+    expect_reject(&mut test, again, vec![], "already revealed");
+
+    // The publisher is paid now, into the payout account fixed at opening.
+    let before = payout_balance(&mut test, desk);
+    test.call_method::<()>(desk, "withdraw", args![Amount::from_u64(PRICE)], vec![]);
+    assert_eq!(payout_balance(&mut test, desk), before.checked_add(Amount::from_u64(PRICE)).unwrap());
     assert_eq!(test.call_method::<Amount>(desk, "withdrawable", args![], vec![]), Amount::zero());
 
     // And the sale is closed: the payload is public.

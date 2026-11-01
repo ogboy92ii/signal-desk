@@ -11,11 +11,16 @@ Built for the Tari Ootle November 2026 contest (MVP), on top of
 ## What the template guarantees
 
 - A call cannot be read on-chain before its reveal epoch.
-- A call opens only as committed: `blake2b(domain ‖ publisher ‖ seq ‖ payload ‖ nonce)`,
-  length-prefixed. The number binds a commitment to one slot of one desk.
+- A call opens only as committed: `blake2b(domain ‖ desk ‖ publisher ‖ seq ‖ payload ‖ nonce)`,
+  length-prefixed. The desk address and the number bind a commitment to one slot of one desk.
+- `seal` takes the number it expects, so two racing seals cannot land a call under the wrong number.
+- The opened call is published in the `call_revealed` event, not kept in the state; payloads are
+  printable ASCII only (no bidi or invisible characters showing one call while hashing another).
 - No cherry-picking: every sealed call has a number; `stats()` returns `(sealed, opened, never opened)`.
+  A desk holds at most 1 000 calls, and CI checks that a full desk still sells, opens and pays out.
 - The desk's opening epoch is public, so its age cannot be faked.
 - Proceeds of a call become withdrawable only once it is opened; until then they back refunds.
+  They are always paid into the payout account fixed at `open_desk`; nothing can change it.
 - TARI only, no owner, every method listed in the access rules, `deny_all` by default.
 
 Not guaranteed: the quality of a call, and (in this first stage) the delivery of the payload to the
