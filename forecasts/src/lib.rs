@@ -263,6 +263,15 @@ mod tests {
         assert_ne!(commitment_of("component_aa", 0, &[1u8; 32], "12", b"0n"), commitment_of("component_aa", 0, &[1u8; 32], "120", b"n"));
     }
 
+    /// Fixed vector shared with the web client (maquettes/chain.js `forecastCommitment`).
+    #[test]
+    fn the_commitment_matches_the_web_client() {
+        let board = format!("component_{}", "aa".repeat(32));
+        let c = commitment_of(&board, 3, &[7u8; 32], "98500", &[9u8; 32]).into_array();
+        let hex: String = c.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex, "805d1472ffe31b0ac0003c9d40fd12fe17cec3bdce1a59f34d2dfa3bd7442d94");
+    }
+
     #[test]
     fn answers_are_short_printable_ascii_and_texts_hide_nothing() {
         assert!(answer_is_canonical("98500.25") && answer_is_canonical("Oui"));
