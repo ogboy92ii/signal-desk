@@ -11,6 +11,11 @@ use tari_template_test_tooling::transaction::args;
 const A: &str = "v1|ETHUSDT|LONG|3100|3400|2950|2026-11-20T00:00Z";
 const B: &str = "v1|SOLUSDT|SHORT|180|160|190|2026-11-20T00:00Z";
 
+/// The public label of `A`.
+fn eth() -> String {
+    "ETHUSDT".to_string()
+}
+
 #[test]
 fn an_unopened_call_counts_as_lost_and_refunds_its_buyers() {
     let (mut test, desk) = new_desk();
@@ -84,13 +89,13 @@ fn a_commitment_only_opens_under_its_own_number_and_desk() {
 
     // Sealed as call #0 with the commitment computed for #1: no payload can ever open it.
     let wrong_slot = digest(&test, desk, 1, A);
-    test.call_method::<u64>(desk, "seal", args![0u64, wrong_slot, 5u64, Amount::from_u64(PRICE)], vec![]);
+    test.call_method::<u64>(desk, "seal", args![0u64, wrong_slot, 5u64, Amount::from_u64(PRICE), eth()], vec![]);
 
     // Copied from another desk of the same publisher: it does not open here either.
     let (payout, _, _) = test.create_empty_account();
     let other: ComponentAddress = test.call_function("SignalDesk", "open_desk", args![payout], vec![]);
     let copied = digest(&test, other, 1, B);
-    test.call_method::<u64>(desk, "seal", args![1u64, copied, 5u64, Amount::from_u64(PRICE)], vec![]);
+    test.call_method::<u64>(desk, "seal", args![1u64, copied, 5u64, Amount::from_u64(PRICE), "SOLUSDT".to_string()], vec![]);
 
     set_epoch(&mut test, 5);
     for (seq, payload) in [(0u64, A), (1u64, B)] {
@@ -109,8 +114,8 @@ fn a_seal_racing_another_is_refused_instead_of_misnumbered() {
     // Two seals both prepared for #0; the first lands, the second must not slip in as #1.
     let a = digest(&test, desk, 0, A);
     let b = digest(&test, desk, 0, B);
-    test.call_method::<u64>(desk, "seal", args![0u64, a, 5u64, Amount::from_u64(PRICE)], vec![]);
-    let racing = test.transaction().call_method(desk, "seal", args![0u64, b, 5u64, Amount::from_u64(PRICE)]).build_and_seal(&key);
+    test.call_method::<u64>(desk, "seal", args![0u64, a, 5u64, Amount::from_u64(PRICE), eth()], vec![]);
+    let racing = test.transaction().call_method(desk, "seal", args![0u64, b, 5u64, Amount::from_u64(PRICE), eth()]).build_and_seal(&key);
     expect_reject(&mut test, racing, vec![], "next call number is 1");
     assert_eq!(test.call_method::<u64>(desk, "call_count", args![], vec![]), 1);
 }
@@ -122,7 +127,7 @@ fn only_the_publisher_seals_and_proceeds_only_reach_the_payout_account() {
     let commitment = digest(&test, desk, 0, A);
     let seal_tx = test
         .transaction()
-        .call_method(desk, "seal", args![0u64, commitment, 5u64, Amount::from_u64(PRICE)])
+        .call_method(desk, "seal", args![0u64, commitment, 5u64, Amount::from_u64(PRICE), eth()])
         .build_and_seal(&other_key);
     test.execute_expect_failure(seal_tx, vec![]);
     assert_eq!(test.call_method::<u64>(desk, "call_count", args![], vec![]), 0);
@@ -155,18 +160,20 @@ fn bad_terms_payloads_and_unknown_calls_are_refused() {
     let (mut test, desk) = new_desk();
     let key = test.secret_key().clone();
     let c = digest(&test, desk, 0, A);
-    let past = test.transaction().call_method(desk, "seal", args![0u64, c, 1u64, Amount::from_u64(PRICE)]).build_and_seal(&key);
+    let past = test.transaction().call_method(desk, "seal", args![0u64, c, 1u64, Amount::from_u64(PRICE), eth()]).build_and_seal(&key);
     expect_reject(&mut test, past, vec![], "must be in the future");
-    let far = test.transaction().call_method(desk, "seal", args![0u64, c, 20_000u64, Amount::from_u64(PRICE)]).build_and_seal(&key);
+    let far = test.transaction().call_method(desk, "seal", args![0u64, c, 20_000u64, Amount::from_u64(PRICE), eth()]).build_and_seal(&key);
     expect_reject(&mut test, far, vec![], "epochs away");
-    let free = test.transaction().call_method(desk, "seal", args![0u64, c, 5u64, Amount::zero()]).build_and_seal(&key);
+    let free = test.transaction().call_method(desk, "seal", args![0u64, c, 5u64, Amount::zero(), eth()]).build_and_seal(&key);
     expect_reject(&mut test, free, vec![], "price must be positive");
+    let unlabelled = test.transaction().call_method(desk, "seal", args![0u64, c, 5u64, Amount::from_u64(PRICE), "NFL||".to_string()]).build_and_seal(&key);
+    expect_reject(&mut test, unlabelled, vec![], "label must be");
 
     // A payload that would read differently from how it hashes is refused even if it matches.
     let tricky = "v1|BTCUSDT|LONG\u{202E}TROHS|62000";
     let seq: u64 = test.call_method(desk, "call_count", args![], vec![]);
     let t = commitment_of(&desk.to_string(), test.to_public_key_bytes().as_bytes(), seq, tricky, NONCE);
-    test.call_method::<u64>(desk, "seal", args![seq, t, 5u64, Amount::from_u64(PRICE)], vec![]);
+    test.call_method::<u64>(desk, "seal", args![seq, t, 5u64, Amount::from_u64(PRICE), "BTCUSDT".to_string()], vec![]);
     set_epoch(&mut test, 5);
     let bidi = test
         .transaction()
@@ -198,7 +205,7 @@ fn a_full_desk_refuses_more_calls_and_still_works() {
     let c = digest(&test, desk, MAX_CALLS, A);
     let over = test
         .transaction()
-        .call_method(desk, "seal", args![MAX_CALLS, c, 5u64, Amount::from_u64(PRICE)])
+        .call_method(desk, "seal", args![MAX_CALLS, c, 5u64, Amount::from_u64(PRICE), eth()])
         .build_and_seal(&key);
     expect_reject(&mut test, over, vec![], "has reached");
 
@@ -212,4 +219,20 @@ fn a_full_desk_refuses_more_calls_and_still_works() {
     test.call_method::<()>(desk, "settle", args![last], vec![]);
     test.call_method::<()>(desk, "withdraw", args![Amount::from_u64(PRICE)], vec![]);
     assert_eq!(test.call_method::<(u64, u64, u64, u64)>(desk, "stats", args![], vec![]), (MAX_CALLS, 1, MAX_CALLS - 1, 0));
+}
+
+#[test]
+fn a_call_only_opens_on_its_public_label() {
+    let (mut test, desk) = new_desk();
+    let key = test.secret_key().clone();
+    // Committed to an SOL call but labelled ETH: the commitment opens, the label does not match.
+    let c = digest(&test, desk, 0, B);
+    test.call_method::<u64>(desk, "seal", args![0u64, c, 5u64, Amount::from_u64(PRICE), eth()], vec![]);
+    assert_eq!(test.call_method::<String>(desk, "label", args![0u64], vec![]), "ETHUSDT");
+    set_epoch(&mut test, 5);
+    let tx = test
+        .transaction()
+        .call_method(desk, "reveal", args![0u64, B.to_string(), Bytes::from_vec(NONCE.to_vec())])
+        .build_and_seal(&key);
+    expect_reject(&mut test, tx, vec![], "not about the public label");
 }

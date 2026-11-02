@@ -111,6 +111,22 @@ pub fn payload_is_canonical(payload: &str) -> bool {
     payload.bytes().all(|b| (0x20..=0x7E).contains(&b))
 }
 
+pub const MAX_LABEL_LEN: usize = 64;
+
+/// A public label: what a call is about, shown before it opens. One or more `|`-separated
+/// non-empty fields of printable ASCII: `BTCUSDT`, `NFL|KC@BUF|2026-11-22T18:25Z`.
+pub fn label_is_valid(label: &str) -> bool {
+    (2..=MAX_LABEL_LEN).contains(&label.len()) && payload_is_canonical(label) && label.split('|').all(|f| !f.is_empty())
+}
+
+/// Whether a `v1` payload is about `label`: it reads `v1|<label>|...`.
+pub fn payload_has_label(payload: &str, label: &str) -> bool {
+    payload
+        .strip_prefix("v1|")
+        .and_then(|rest| rest.strip_prefix(label))
+        .is_some_and(|rest| rest.starts_with('|'))
+}
+
 /// The payload and nonce a delivered block carries, if it is well formed: lengths in range, a
 /// canonical payload, zeros after the nonce. Anything else is a fraud at dispute.
 pub fn open_block(block: &[u8]) -> Option<(String, Vec<u8>)> {
@@ -360,6 +376,7 @@ mod signal_desk {
                     .method("commitment", rule!(allow_all))
                     .method("sealed_at_epoch", rule!(allow_all))
                     .method("reveal_at_epoch", rule!(allow_all))
+                    .method("label", rule!(allow_all))
                     .method("price", rule!(allow_all))
                     .method("sold", rule!(allow_all))
                     .method("refunded", rule!(allow_all))
@@ -376,7 +393,10 @@ mod signal_desk {
         /// `commitment` must be `commitment_of(desk, publisher key, expected_seq, payload, nonce)`.
         /// Passing the number makes a race fail loudly: if another seal took that number first, this
         /// one is refused instead of landing under a number its commitment can never open.
-        pub fn seal(&mut self, expected_seq: u64, commitment: Hash32, reveal_at_epoch: u64, price: Amount) -> u64 {
+        ///
+        /// `label` is public from the seal on, so buyers know what the call is about; the reveal only
+        /// opens a payload about that same label, so the label cannot lie.
+        pub fn seal(&mut self, expected_seq: u64, commitment: Hash32, reveal_at_epoch: u64, price: Amount, label: String) -> u64 {
             let now = Consensus::current_epoch();
             let seq = self.calls.len() as u64;
             assert!(seq == expected_seq, "next call number is {}, not {}", seq, expected_seq);
@@ -389,6 +409,7 @@ mod signal_desk {
                 MAX_REVEAL_HORIZON_EPOCHS
             );
             assert!(price.is_positive(), "price must be positive");
+            assert!(label_is_valid(&label), "label must be 2 to {} printable characters in non-empty fields", MAX_LABEL_LEN);
 
             // Only code running inside this desk may mint or burn the call's badges. No owner, and
             // every rule locked: an owner bypasses mint rules. Badge data is immutable.
@@ -408,10 +429,12 @@ mod signal_desk {
                 "commitment" => commitment.to_string(),
                 "reveal_at_epoch" => reveal_at_epoch.to_string(),
                 "price" => price.to_string(),
+                "label" => label.clone(),
             });
 
             self.calls.push(Call {
                 commitment,
+                label,
                 sealed_at_epoch: now,
                 reveal_at_epoch,
                 price,
@@ -557,6 +580,7 @@ mod signal_desk {
                 commitment_of(&desk, publisher.as_bytes(), seq, &payload, &nonce) == call.commitment,
                 "payload and nonce do not open this commitment"
             );
+            assert!(payload_has_label(&payload, &call.label), "payload is not about the public label {}", call.label);
 
             call.revealed_at_epoch = Some(now);
             emit_event("call_revealed", metadata! {
@@ -679,6 +703,11 @@ mod signal_desk {
             self.calls[self.index(seq)].reveal_at_epoch
         }
 
+        /// What call `seq` is about, public from the seal on.
+        pub fn label(&self, seq: u64) -> String {
+            self.calls[self.index(seq)].label.clone()
+        }
+
         pub fn price(&self, seq: u64) -> Amount {
             self.calls[self.index(seq)].price
         }
@@ -715,6 +744,8 @@ mod signal_desk {
     /// component: the `#[template]` macro takes the first struct of the module as the component.
     pub struct Call {
         pub commitment: Hash32,
+        /// Public label checked at the reveal (see `seal`).
+        pub label: String,
         pub sealed_at_epoch: u64,
         pub reveal_at_epoch: u64,
         pub price: Amount,
@@ -734,7 +765,7 @@ mod tests {
     //! The commitment scheme and the delivered block, natively: if two different payloads could open
     //! one commitment, or a block could read two ways, the track-record claim would collapse.
 
-    use super::{commitment_of, hex, open_block, payload_is_canonical, BLOCK_LEN};
+    use super::{commitment_of, hex, label_is_valid, open_block, payload_has_label, payload_is_canonical, BLOCK_LEN};
 
     const KEY: &[u8] = &[7u8; 32];
     const DESK: &str = "component_aa";
@@ -797,6 +828,18 @@ mod tests {
         long[0..2].copy_from_slice(&(BLOCK_LEN as u16).to_le_bytes());
         assert_eq!(open_block(&long), None, "length past the block");
         assert_eq!(open_block(&block(b"x", &nonce)[..BLOCK_LEN - 1]), None, "short block");
+    }
+
+    #[test]
+    fn the_public_label_must_prefix_the_payload() {
+        assert!(payload_has_label("v1|BTCUSDT|LONG|62000", "BTCUSDT"));
+        assert!(payload_has_label("v1|NFL|KC@BUF|2026-11-22T18:25Z|WIN|KC", "NFL|KC@BUF|2026-11-22T18:25Z"));
+        assert!(!payload_has_label("v1|BTCUSDTX|LONG", "BTCUSDT"), "a label stops at a field boundary");
+        assert!(!payload_has_label("v1|BTCUSDT", "BTCUSDT"), "nothing after the label");
+        assert!(!payload_has_label("v2|BTCUSDT|LONG", "BTCUSDT"), "unknown version");
+        assert!(label_is_valid("BTCUSDT") && label_is_valid("NBA|LAL@BOS|2026-11-23T00:30Z"));
+        assert!(!label_is_valid("B") && !label_is_valid("NFL||X") && !label_is_valid("NFL|") && !label_is_valid("BTC\nUSDT"));
+        assert!(!label_is_valid(&"A".repeat(65)));
     }
 
     #[test]

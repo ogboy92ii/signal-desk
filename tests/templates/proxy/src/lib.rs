@@ -26,8 +26,8 @@ mod proxy {
                 .create()
         }
 
-        pub fn seal_via(&self, desk: ComponentAddress, seq: u64, commitment: Hash32, reveal_at: u64, price: Amount) -> u64 {
-            ComponentManager::get(desk).call("seal", args![seq, commitment, reveal_at, price])
+        pub fn seal_via(&self, desk: ComponentAddress, seq: u64, commitment: Hash32, reveal_at: u64, price: Amount, label: String) -> u64 {
+            ComponentManager::get(desk).call("seal", args![seq, commitment, reveal_at, price, label])
         }
 
         pub fn withdraw_via(&self, desk: ComponentAddress, amount: Amount) {

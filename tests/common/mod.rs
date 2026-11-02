@@ -184,7 +184,8 @@ pub fn payout_balance(test: &mut TemplateTest, desk: ComponentAddress) -> Amount
 pub fn seal(test: &mut TemplateTest, desk: ComponentAddress, payload: &str, reveal_at: u64) -> u64 {
     let seq: u64 = test.call_method(desk, "call_count", args![], vec![]);
     let commitment = digest(test, desk, seq, payload);
-    test.call_method(desk, "seal", args![seq, commitment, reveal_at, Amount::from_u64(PRICE)], vec![])
+    let label = payload.split('|').nth(1).expect("v1|LABEL|... payload").to_string();
+    test.call_method(desk, "seal", args![seq, commitment, reveal_at, Amount::from_u64(PRICE), label], vec![])
 }
 
 /// Opens call `seq` and returns the `payload` published in its `call_revealed` event.
