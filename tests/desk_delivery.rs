@@ -210,7 +210,13 @@ fn a_purchase_needs_a_proof_for_its_own_call() {
 #[test]
 fn a_desk_full_of_sales_refuses_more_and_still_works() {
     let (mut test, desk) = new_desk();
+    // The worst case for the state the template decodes on every call: every call slot used, and
+    // every sale on the last one.
+    for _ in 1..MAX_CALLS {
+        seal(&mut test, desk, OTHER, REVEAL_AT);
+    }
     let seq = seal(&mut test, desk, CALL, REVEAL_AT);
+    assert_eq!(seq, MAX_CALLS - 1);
     let (account, proof, key) = test.create_funded_account();
     let b = client::secret(b"bulk buyer");
     let (c, z) = client::prove_knows(&client::context(&desk, seq, None), &b, b"buy");

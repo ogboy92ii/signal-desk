@@ -78,9 +78,10 @@ pub const MAX_PAYLOAD_LEN: usize = 1024;
 /// blocks of keystream; 1 280 hex characters, under the 2 KiB event limit. A call is deliverable only
 /// if `payload + nonce` fit in 637 bytes (a `v1|…` call is about 50).
 pub const BLOCK_LEN: usize = 640;
-/// Bounds the registry. The component state is loaded on every call and capped at 1 MiB per substate:
-/// a call costs about 150 bytes and a sale about 110, so 1 000 calls and 3 000 sales stay far below
-/// the cap. The CI fills a desk to these limits and checks it still works.
+/// Bounds the registry. The component state is decoded on every call, within the engine's 2 MiB of
+/// WASM memory, and capped at 1 MiB per substate: a call costs about 150 bytes and a sale 97 (packed),
+/// so 1 000 calls and 3 000 sales stay well below both. The CI fills a desk to these limits and checks
+/// it still works.
 pub const MAX_CALLS: u64 = 1_000;
 pub const MAX_SALES: u64 = 3_000;
 
@@ -240,24 +241,54 @@ pub struct BadgeData {
     pub sale: u64,
 }
 
-/// Where one sale stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, minicbor::Encode, minicbor::Decode, minicbor::CborLen)]
-pub enum SaleStatus {
-    /// Paid, waiting for delivery.
-    #[n(0)]
-    Paid,
-    /// Delivered; may still be disputed until the end of the reveal window.
-    #[n(1)]
-    Delivered,
-    /// Disputed, and the template found the delivery matched the sealed call.
-    #[n(2)]
-    Upheld,
-    /// Disputed, and the delivery did not match the sealed call (or was unreadable). Refundable.
-    #[n(3)]
-    Fraud,
-    /// The buyer burnt the badge and got the price back.
-    #[n(4)]
-    Refunded,
+/// The sales of a call are packed records in one byte string, `SALE_LEN` bytes each:
+/// `buyer key (32) || ephemeral key R (32) || ciphertext hash (32) || status (1)`, R and the hash all
+/// zeros until delivery (the identity point is never a valid R). One allocation per call: as separate
+/// structs, the engine's 2 MiB of WASM memory ran out near 1 200 sales while decoding the state.
+pub const SALE_LEN: usize = 97;
+/// Paid, waiting for delivery.
+pub const PAID: u8 = 0;
+/// Delivered; may still be disputed until the end of the reveal window.
+pub const DELIVERED: u8 = 1;
+/// Disputed, and the template found the delivery matched the sealed call.
+pub const UPHELD: u8 = 2;
+/// Disputed, and the delivery did not match the sealed call (or was unreadable). Refundable.
+pub const FRAUD: u8 = 3;
+/// The buyer burnt the badge and got the price back.
+pub const REFUNDED: u8 = 4;
+
+fn status_name(status: u8) -> &'static str {
+    match status {
+        PAID => "Paid",
+        DELIVERED => "Delivered",
+        UPHELD => "Upheld",
+        FRAUD => "Fraud",
+        REFUNDED => "Refunded",
+        _ => "Unknown",
+    }
+}
+
+fn sale_count(sales: &[u8]) -> u64 {
+    (sales.len() / SALE_LEN) as u64
+}
+
+/// Index of record `sale` in `sales`, checked.
+fn sale_offset(sales: &[u8], sale: u64) -> usize {
+    assert!(sale < sale_count(sales), "no sale #{} for this call", sale);
+    sale as usize * SALE_LEN
+}
+
+fn key_at(sales: &[u8], at: usize) -> RistrettoPublicKeyBytes {
+    RistrettoPublicKeyBytes::try_from(&sales[at..at + 32]).expect("32 bytes")
+}
+
+fn status_at(sales: &[u8], sale: u64) -> u8 {
+    sales[sale_offset(sales, sale) + 96]
+}
+
+fn set_status(sales: &mut [u8], sale: u64, status: u8) {
+    let at = sale_offset(sales, sale);
+    sales[at + 96] = status;
 }
 
 #[template]
@@ -384,7 +415,7 @@ mod signal_desk {
                 reveal_at_epoch,
                 price,
                 badges: badges.into(),
-                sales: Vec::new(),
+                sales: Bytes::from_vec(Vec::new()),
                 refunded: 0,
                 frauds: 0,
                 settled: false,
@@ -415,13 +446,17 @@ mod signal_desk {
             assert!(paid >= price, "paid {} but the price is {}", paid, price);
             let change = (paid > price).then(|| payment.take(paid - price));
 
-            let sale = call.sales.len() as u64;
+            let sale = sale_count(&call.sales);
             let badge = call.badges.mint_non_fungible(
                 NonFungibleId::random(),
                 &BadgeData { seq, commitment: call.commitment.into_array(), bought_at_epoch: now, sale },
                 &(),
             );
-            call.sales.push(Sale { buyer_key, ephemeral: None, ciphertext: None, status: SaleStatus::Paid });
+            let mut sales = core::mem::replace(&mut call.sales, Bytes::from_vec(Vec::new())).into_vec();
+            sales.extend_from_slice(buyer_key.as_bytes());
+            sales.extend_from_slice(&[0u8; 64]);
+            sales.push(PAID);
+            call.sales = Bytes::from_vec(sales);
             self.sales_count += 1;
             self.earnings.deposit(payment);
             emit_event("call_bought", metadata! {
@@ -442,16 +477,15 @@ mod signal_desk {
             let i = self.index(seq);
             let call = &mut self.calls[i];
             assert!(call.revealed_at_epoch.is_none() && now < call.reveal_at_epoch, "too late to deliver: the reveal epoch has been reached");
-            let s = Self::sale_index(call, sale);
-            assert!(call.sales[s].status == SaleStatus::Paid, "sale #{} is not awaiting delivery", sale);
+            assert!(status_at(&call.sales, sale) == PAID, "sale #{} is not awaiting delivery", sale);
             assert_valid_point(&ephemeral, "ephemeral key");
             assert!(ciphertext.len() == BLOCK_LEN, "ciphertext must be exactly {} bytes", BLOCK_LEN);
             assert_knows(&context(&desk, seq, Some(sale)), &ephemeral, MSG_EPHEMERAL, &rc, &rz, "ephemeral key");
 
-            let entry = &mut call.sales[s];
-            entry.ephemeral = Some(ephemeral);
-            entry.ciphertext = Some(ciphertext_hash(&ciphertext));
-            entry.status = SaleStatus::Delivered;
+            let at = sale_offset(&call.sales, sale);
+            call.sales[at + 32..at + 64].copy_from_slice(ephemeral.as_bytes());
+            call.sales[at + 64..at + 96].copy_from_slice(&ciphertext_hash(&ciphertext).into_array());
+            call.sales[at + 96] = DELIVERED;
             emit_event("call_delivered", metadata! {
                 "desk" => desk.to_string(),
                 "seq" => seq.to_string(),
@@ -472,16 +506,13 @@ mod signal_desk {
             let i = self.index(seq);
             let call = &mut self.calls[i];
             assert!(now < call.reveal_at_epoch.saturating_add(REVEAL_WINDOW_EPOCHS), "dispute window closed");
-            let s = Self::sale_index(call, sale);
-            let (buyer_key, ephemeral, delivered, status) = {
-                let e = &call.sales[s];
-                (e.buyer_key, e.ephemeral, e.ciphertext, e.status)
-            };
-            assert!(status == SaleStatus::Delivered, "sale #{} has no delivery to dispute", sale);
-            assert!(delivered == Some(ciphertext_hash(&ciphertext)), "not the ciphertext of this delivery");
+            assert!(status_at(&call.sales, sale) == DELIVERED, "sale #{} has no delivery to dispute", sale);
+            let at = sale_offset(&call.sales, sale);
+            let buyer_key = key_at(&call.sales, at);
+            let ephemeral = key_at(&call.sales, at + 32);
+            assert!(call.sales[at + 64..at + 96] == ciphertext_hash(&ciphertext).into_array(), "not the ciphertext of this delivery");
             assert_valid_point(&shared, "shared point");
             let ctx = context(&desk, seq, Some(sale));
-            let ephemeral = ephemeral.expect("a delivery has an ephemeral key");
             assert!(verify_shared(&ctx, &buyer_key, &ephemeral, &shared, &c, &z), "invalid proof that the shared point is the buyer's");
 
             let stream = keystream(&ctx, &buyer_key, &ephemeral, &shared);
@@ -491,9 +522,9 @@ mod signal_desk {
                 .map(|(payload, nonce)| commitment_of(&desk.to_string(), publisher.as_bytes(), seq, &payload, &nonce) == call.commitment)
                 .unwrap_or(false);
             if honest {
-                call.sales[s].status = SaleStatus::Upheld;
+                set_status(&mut call.sales, sale, UPHELD);
             } else {
-                call.sales[s].status = SaleStatus::Fraud;
+                set_status(&mut call.sales, sale, FRAUD);
                 call.frauds += 1;
             }
             emit_event("call_disputed", metadata! {
@@ -531,7 +562,7 @@ mod signal_desk {
                 "desk" => desk,
                 "seq" => seq.to_string(),
                 "epoch" => now.to_string(),
-                "sold" => call.sales.len().to_string(),
+                "sold" => sale_count(&call.sales).to_string(),
                 "payload" => payload,
                 "nonce" => hex(&nonce),
             });
@@ -546,7 +577,7 @@ mod signal_desk {
             assert!(call.revealed_at_epoch.is_some(), "call never opened: its sales refund");
             assert!(now >= call.reveal_at_epoch.saturating_add(REVEAL_WINDOW_EPOCHS), "disputes are open until epoch {}", call.reveal_at_epoch.saturating_add(REVEAL_WINDOW_EPOCHS));
             assert!(!call.settled, "already settled");
-            let earned = call.sales.iter().filter(|s| matches!(s.status, SaleStatus::Delivered | SaleStatus::Upheld)).count() as u64;
+            let earned = call.sales.chunks(SALE_LEN).filter(|s| matches!(s[96], DELIVERED | UPHELD)).count() as u64;
             let proceeds = call.price.checked_mul(Amount::from_u64(earned)).expect("proceeds overflow");
             call.settled = true;
             self.withdrawable = self.withdrawable.checked_add(proceeds).expect("withdrawable overflows");
@@ -566,16 +597,14 @@ mod signal_desk {
             for nft in &nfts {
                 let data: BadgeData = nft.get_data();
                 assert!(data.seq == seq, "badge of another call");
-                let s = Self::sale_index(call, data.sale);
-                let status = call.sales[s].status;
-                let due = match status {
-                    SaleStatus::Fraud => true,
-                    SaleStatus::Paid => now >= call.reveal_at_epoch,
-                    SaleStatus::Delivered | SaleStatus::Upheld => never_opened,
-                    SaleStatus::Refunded => false,
+                let due = match status_at(&call.sales, data.sale) {
+                    FRAUD => true,
+                    PAID => now >= call.reveal_at_epoch,
+                    DELIVERED | UPHELD => never_opened,
+                    _ => false,
                 };
                 assert!(due, "sale #{} has nothing to refund", data.sale);
-                call.sales[s].status = SaleStatus::Refunded;
+                set_status(&mut call.sales, data.sale, REFUNDED);
             }
             let count = nfts.len() as u64;
             let due = call.price.checked_mul(Amount::from_u64(count)).expect("refund amount overflows");
@@ -654,7 +683,7 @@ mod signal_desk {
         }
 
         pub fn sold(&self, seq: u64) -> u64 {
-            self.calls[self.index(seq)].sales.len() as u64
+            sale_count(&self.calls[self.index(seq)].sales)
         }
 
         pub fn refunded(&self, seq: u64) -> u64 {
@@ -671,8 +700,7 @@ mod signal_desk {
 
         /// `"Paid"`, `"Delivered"`, `"Upheld"`, `"Fraud"` or `"Refunded"`.
         pub fn sale_status(&self, seq: u64, sale: u64) -> String {
-            let call = &self.calls[self.index(seq)];
-            format!("{:?}", call.sales[Self::sale_index(call, sale)].status)
+            status_name(status_at(&self.calls[self.index(seq)].sales, sale)).to_string()
         }
 
         fn index(&self, seq: u64) -> usize {
@@ -680,10 +708,6 @@ mod signal_desk {
             seq as usize
         }
 
-        fn sale_index(call: &Call, sale: u64) -> usize {
-            assert!(sale < call.sales.len() as u64, "no sale #{} for this call", sale);
-            sale as usize
-        }
     }
 
     /// One sealed call. Entries are appended to the registry and never removed. Declared after the
@@ -695,20 +719,12 @@ mod signal_desk {
         pub price: Amount,
         /// One badge resource per call, mintable and burnable only by the desk.
         pub badges: ResourceManager,
-        pub sales: Vec<Sale>,
+        /// Packed sale records, `SALE_LEN` bytes each (see `SALE_LEN`).
+        pub sales: Bytes,
         pub refunded: u64,
         pub frauds: u64,
         pub settled: bool,
         pub revealed_at_epoch: Option<u64>,
-    }
-
-    /// One sale of a call: the buyer's key, and the delivery once made (its ephemeral key and the
-    /// hash of the ciphertext, which itself lives in the `call_delivered` event).
-    pub struct Sale {
-        pub buyer_key: RistrettoPublicKeyBytes,
-        pub ephemeral: Option<RistrettoPublicKeyBytes>,
-        pub ciphertext: Option<Hash32>,
-        pub status: SaleStatus,
     }
 }
 
