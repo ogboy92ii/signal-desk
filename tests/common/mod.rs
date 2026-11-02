@@ -22,8 +22,8 @@ use tari_template_test_tooling::{
 
 pub const PRICE: u64 = 1_000;
 pub const REVEAL_WINDOW_EPOCHS: u64 = 10;
-pub const MAX_CALLS: u64 = 1_000;
-pub const MAX_SALES: u64 = 3_000;
+pub const MAX_CALLS: u64 = 500;
+pub const MAX_SALES: u64 = 1_000;
 pub const BLOCK_LEN: usize = 640;
 pub const NONCE: &[u8] = b"demo-nonce-0123456789abcdefghijk";
 

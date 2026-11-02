@@ -78,12 +78,13 @@ pub const MAX_PAYLOAD_LEN: usize = 1024;
 /// blocks of keystream; 1 280 hex characters, under the 2 KiB event limit. A call is deliverable only
 /// if `payload + nonce` fit in 637 bytes (a `v1|…` call is about 50).
 pub const BLOCK_LEN: usize = 640;
-/// Bounds the registry. The component state is decoded on every call, within the engine's 2 MiB of
-/// WASM memory, and capped at 1 MiB per substate: a call costs about 150 bytes and a sale 97 (packed),
-/// so 1 000 calls and 3 000 sales stay well below both. The CI fills a desk to these limits and checks
-/// it still works.
-pub const MAX_CALLS: u64 = 1_000;
-pub const MAX_SALES: u64 = 3_000;
+/// Bounds the registry. The whole component state is decoded and re-encoded on every call within the
+/// engine's 2 MiB of WASM memory (Ootle 0.49), several copies at once: in CI a desk holding 1 000 calls
+/// ran out near 890 sales. 500 calls and 1 000 sales keep a wide margin; the CI fills a desk to both
+/// limits at once and checks it still sells, delivers, opens and settles. Larger desks would need one
+/// component per call.
+pub const MAX_CALLS: u64 = 500;
+pub const MAX_SALES: u64 = 1_000;
 
 const _: () = assert!(BLOCK_LEN.is_multiple_of(64) && BLOCK_LEN / 64 <= 256);
 
