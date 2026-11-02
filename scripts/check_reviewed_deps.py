@@ -1,6 +1,9 @@
 """Fail if the crates compiled into the wasm differ from reviewed-deps.txt.
 
-Usage: python3 scripts/check_reviewed_deps.py
+Usage: python3 scripts/check_reviewed_deps.py [root package]
+
+Run from the crate to check (the repository root for signal_desk, forecasts/ for
+signal_forecasts): both wasm share the one reviewed list.
 
 Compares, for the wasm target and normal dependencies only (what ends up in the published binary
 or runs as a proc-macro to build it), the set of (name, version, checksum) resolved by
@@ -8,11 +11,13 @@ Cargo.lock with the hand-reviewed list. Any added, removed or changed crate fail
 until it has been reviewed and the list updated. Reads metadata only: builds nothing.
 """
 
+import os
 import re
 import subprocess
 import sys
 
-ROOT_PACKAGE = "signal_desk"
+ROOT_PACKAGE = sys.argv[1] if len(sys.argv) > 1 else "signal_desk"
+REVIEWED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "reviewed-deps.txt")
 
 
 def resolved():
@@ -38,7 +43,7 @@ def resolved():
 
 def reviewed():
     entries = set()
-    for line in open("reviewed-deps.txt", encoding="utf-8"):
+    for line in open(REVIEWED, encoding="utf-8"):
         line = line.split("#", 1)[0].strip()
         if line:
             name, version, checksum = line.split()
