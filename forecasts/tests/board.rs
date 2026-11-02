@@ -55,6 +55,15 @@ fn player(test: &mut TemplateTest) -> Player {
     Player { key, public: public.to_byte_type(), proof }
 }
 
+/// A signing key with no account, number `i`.
+fn signer(i: u64) -> Player {
+    use tari_template_test_tooling::crypto::{PublicKey, RistrettoPublicKey, SecretKey};
+    let seed: [u8; 64] = blake2::Blake2b512::digest(format!("signal-forecasts test signer {i}")).into();
+    let key = RistrettoSecretKey::from_uniform_bytes(&seed).expect("64 bytes");
+    let public = RistrettoPublicKey::from_secret_key(&key).to_byte_type();
+    Player { key, public, proof: NonFungibleAddress::from_public_key(public) }
+}
+
 fn seal_tx(test: &mut TemplateTest, board: ComponentAddress, question: u64, p: &Player, answer: &str) -> Transaction {
     let c = commitment_of(&board.to_string(), question, p.public.as_bytes(), answer, NONCE);
     test.transaction().call_method(board, "seal", args![question, c]).build_and_seal(&p.key)
@@ -175,17 +184,18 @@ fn a_full_board_refuses_more_and_still_works() {
     let over = test.transaction().call_method(board, "ask", args![MAX_QUESTIONS, Q.to_string(), 5u64, 15u64]).build_and_seal(&key);
     expect_reject(&mut test, over, "has reached");
 
-    // Every forecast on the last question, from distinct keys.
+    // Every forecast on the last question, from distinct keys. The tooling's own key supply stops at
+    // 255, and sealing needs no account: derive the keys here.
     let last = MAX_QUESTIONS - 1;
     let mut first = None;
-    for _ in 0..MAX_FORECASTS {
-        let p = player(&mut test);
+    for i in 0..MAX_FORECASTS {
+        let p = signer(i);
         let tx = seal_tx(&mut test, board, last, &p, "98500");
-        test.execute_expect_success(tx, vec![p.proof.clone()]);
+        test.execute_expect_success(tx, vec![]);
         first.get_or_insert(p);
     }
     assert_eq!(test.call_method::<u64>(board, "forecast_count", args![last], vec![]), MAX_FORECASTS);
-    let extra = player(&mut test);
+    let extra = signer(MAX_FORECASTS);
     let tx = seal_tx(&mut test, board, 0, &extra, "1");
     expect_reject(&mut test, tx, "has reached");
 
