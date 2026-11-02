@@ -98,6 +98,11 @@ jobs:
       - name: Crates in the forecasts wasm are the reviewed ones
         working-directory: forecasts
         run: python3 ../scripts/check_reviewed_deps.py signal_forecasts
+      - name: cargo deny check (follows)
+        run: cargo deny --manifest-path follows/Cargo.toml check
+      - name: Crates in the follows wasm are the reviewed ones
+        working-directory: follows
+        run: python3 ../scripts/check_reviewed_deps.py signal_follows
 
   end-to-end:
     # The desk's claims, played against a simulated Ootle ledger: sealed calls sell, open only as
@@ -129,6 +134,9 @@ jobs:
         run: tari lint --no-clippy
       - name: tari lint (forecasts)
         working-directory: forecasts
+        run: tari lint --no-clippy
+      - name: tari lint (follows)
+        working-directory: follows
         run: tari lint --no-clippy
 
   forecasts:
@@ -187,6 +195,67 @@ jobs:
           EXPECTED: ${{ needs.forecasts.outputs.sha256 }}
         run: |
           actual=$(sha256sum target/wasm32-unknown-unknown/release/signal_forecasts.wasm | cut -d' ' -f1)
+          echo "build job : $EXPECTED"
+          echo "rebuild   : $actual"
+          test -n "$EXPECTED" && test "$actual" = "$EXPECTED"
+
+
+  follows:
+    runs-on: ubuntu-latest
+    outputs:
+      sha256: ${{ steps.hash.outputs.sha256 }}
+    defaults:
+      run:
+        working-directory: follows
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install the wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: follows
+      - name: Unit tests
+        run: cargo test --lib --locked
+      - name: Build the template
+        run: cargo build --release --locked --target wasm32-unknown-unknown
+      - name: Lint
+        run: cargo clippy --release --locked --target wasm32-unknown-unknown -- -D warnings
+      - name: Refuse a binary that carries personal or secret data
+        run: python3 ../scripts/scan_binary.py target/wasm32-unknown-unknown/release/signal_follows.wasm
+      - name: Record the binary's sha256
+        id: hash
+        run: |
+          cd target/wasm32-unknown-unknown/release
+          sha256sum signal_follows.wasm | tee signal_follows.wasm.sha256
+          echo "sha256=$(cut -d' ' -f1 signal_follows.wasm.sha256)" >> "$GITHUB_OUTPUT"
+      - name: Publish the binary as a download
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: signal_follows-${{ github.sha }}
+          path: |
+            follows/target/wasm32-unknown-unknown/release/signal_follows.wasm
+            follows/target/wasm32-unknown-unknown/release/signal_follows.wasm.sha256
+          if-no-files-found: error
+      - name: Play a follow list
+        run: cargo test --locked --no-fail-fast --test follows -- --nocapture
+
+  follows-reproduce:
+    needs: follows
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: follows
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install the wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Rebuild the template
+        run: cargo build --release --locked --target wasm32-unknown-unknown
+      - name: Compare with the follows job
+        env:
+          EXPECTED: ${{ needs.follows.outputs.sha256 }}
+        run: |
+          actual=$(sha256sum target/wasm32-unknown-unknown/release/signal_follows.wasm | cut -d' ' -f1)
           echo "build job : $EXPECTED"
           echo "rebuild   : $actual"
           test -n "$EXPECTED" && test "$actual" = "$EXPECTED"
