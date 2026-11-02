@@ -6,7 +6,8 @@
 //! Who follows which Signal Desk caller, on the Tari Ootle. No money moves.
 //!
 //! Each person opens **one list of their own** (`open`). Only the key that opened it may change it
-//! (`follow`, `unfollow`); anyone may read it (`following`, `is_following`). There is no shared registry:
+//! (`follow`, `unfollow`, or `apply` for many changes under one signature); anyone may read it
+//! (`following`, `is_following`). There is no shared registry:
 //! a list stays small whatever the number of users, so the engine's memory limit is never in play.
 //!
 //! Every change is published as an event (`followed`, `unfollowed`), so a caller's follower count is the
@@ -16,6 +17,8 @@ use tari_template_lib::prelude::*;
 
 /// Most desks one list may follow.
 pub const MAX_FOLLOWS: usize = 500;
+/// Most changes one `apply` may carry.
+pub const MAX_BATCH: usize = 50;
 
 #[template]
 mod signal_follows {
@@ -39,6 +42,7 @@ mod signal_follows {
                     ComponentAccessRules::new()
                         .method("follow", rule!(public_key(owner)))
                         .method("unfollow", rule!(public_key(owner)))
+                        .method("apply", rule!(public_key(owner)))
                         .method("following", rule!(allow_all))
                         .method("is_following", rule!(allow_all))
                         .method("owner", rule!(allow_all))
@@ -69,6 +73,18 @@ mod signal_follows {
                 "owner" => self.owner.to_string(),
                 "desk" => desk.to_string(),
             });
+        }
+
+        /// Applies a batch in one transaction, so a client signs once for many changes: unfollows
+        /// `remove`, then follows `add`. Each desk follows the single-change rules. Owner only.
+        pub fn apply(&mut self, add: Vec<ComponentAddress>, remove: Vec<ComponentAddress>) {
+            assert!(add.len() + remove.len() <= MAX_BATCH, "at most {} changes per batch", MAX_BATCH);
+            for desk in remove {
+                self.unfollow(desk);
+            }
+            for desk in add {
+                self.follow(desk);
+            }
         }
 
         /// The desks followed, oldest first.

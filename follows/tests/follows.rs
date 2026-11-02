@@ -86,3 +86,34 @@ fn a_full_list_refuses_more_and_still_works() {
     test.call_method::<()>(list, "follow", args![desk(MAX_FOLLOWS)], vec![]);
     assert!(test.call_method::<bool>(list, "is_following", args![desk(MAX_FOLLOWS)], vec![]));
 }
+
+#[test]
+fn a_batch_applies_many_changes_under_one_signature() {
+    let (mut test, list) = new_list();
+    let key = test.secret_key().clone();
+    test.call_method::<()>(list, "follow", args![desk(1)], vec![]);
+    test.call_method::<()>(list, "follow", args![desk(2)], vec![]);
+
+    // One transaction: unfollow 1, follow 3 and 4; one event per change.
+    let tx = test.transaction().call_method(list, "apply", args![vec![desk(3), desk(4)], vec![desk(1)]]).build_and_seal(&key);
+    let result = test.execute_expect_success(tx, vec![]);
+    let topics: Vec<String> = result.finalize.events.iter().map(|e| e.topic().to_string()).collect();
+    assert_eq!(topics.iter().filter(|t| t.ends_with(".followed")).count(), 2);
+    assert_eq!(topics.iter().filter(|t| t.ends_with(".unfollowed")).count(), 1);
+    assert_eq!(test.call_method::<Vec<ComponentAddress>>(list, "following", args![], vec![]), vec![desk(2), desk(3), desk(4)]);
+
+    // All or nothing: one bad change rejects the whole batch.
+    let bad = test.transaction().call_method(list, "apply", args![vec![desk(5)], vec![desk(9)]]).build_and_seal(&key);
+    expect_reject(&mut test, bad, "not following");
+    assert!(!test.call_method::<bool>(list, "is_following", args![desk(5)], vec![]));
+
+    // Bounded batches.
+    let big: Vec<ComponentAddress> = (100..151).map(desk).collect();
+    let over = test.transaction().call_method(list, "apply", args![big, Vec::<ComponentAddress>::new()]).build_and_seal(&key);
+    expect_reject(&mut test, over, "at most");
+
+    // Owner only.
+    let (_, _, other) = test.create_funded_account();
+    let foreign = test.transaction().call_method(list, "apply", args![vec![desk(6)], Vec::<ComponentAddress>::new()]).build_and_seal(&other);
+    test.execute_expect_failure(foreign, vec![]);
+}
