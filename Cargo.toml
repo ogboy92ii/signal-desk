@@ -38,3 +38,7 @@ tari_ootle_template_build = "0.17"
 [dev-dependencies]
 tari_template_test_tooling = "0.48"
 tari_template_lib_types = "0.36.0"
+# The tests' independent copy of the client (sale keys, proofs, delivery cipher). Both already in
+# Cargo.lock through the test tooling: no new crate.
+curve25519-dalek = "5.0.0"
+sha2 = "0.10.9"

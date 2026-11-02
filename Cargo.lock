@@ -2653,7 +2653,9 @@ name = "signal_desk"
 version = "0.1.0"
 dependencies = [
  "blake2",
+ "curve25519-dalek",
  "minicbor",
+ "sha2 0.10.9",
  "tari_ootle_template_build",
  "tari_template_abi",
  "tari_template_lib",

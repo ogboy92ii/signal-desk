@@ -7,26 +7,45 @@
 //! into the desk's registry under the next sequence number, and nothing ever removes it.
 //!
 //! A call is only `commitment_of(desk, publisher, seq, payload, nonce)` while it is for sale: the
-//! payload never touches the chain before its reveal epoch. Buyers pay into the desk's escrow and
-//! receive a badge for that call. From the reveal epoch, anyone holding the payload and nonce can open
-//! it; the template checks it against the commitment and publishes it in the `call_revealed` event. A
-//! call nobody opens within the reveal window counts as never opened and every badge holder can burn
-//! their badge for a refund.
+//! payload never touches the chain in clear before its reveal epoch.
+//!
+//! 1. `buy`: a buyer pays the price into the desk's escrow, registers a sale key `B` (drawn by their
+//!    client for this purchase, with a proof they hold it) and receives a badge for that sale.
+//! 2. `deliver`: before the reveal epoch, the caller sends the call to that buyer only: an ephemeral
+//!    key `R` with a proof of its secret `r`, and the call encrypted under a keystream derived from
+//!    `S = r·B`. Only the buyer can compute `S = b·R`. The ciphertext goes out in an event; the state
+//!    keeps its hash.
+//! 3. `dispute`: until the end of the reveal window, the buyer may publish `S` with a DLEQ proof that
+//!    `S = b·R`. The template decrypts, re-hashes and compares with the sealed commitment:
+//!    * match: the dispute is rejected (and the call is public from then on);
+//!    * mismatch or unreadable block: **fraud**. The sale becomes refundable and the call carries the
+//!      verdict for good in [`SignalDesk::stats`].
+//! 4. `reveal`: from the reveal epoch, anyone holding the payload and nonce opens the call; the
+//!    template checks it and publishes it in the `call_revealed` event.
+//! 5. `settle`: once the reveal window of an opened call is over, the price of every delivered sale
+//!    that was not a fraud becomes payable to the caller. A sale never delivered is never paid.
+//! 6. `refund`: a badge refunds its sale if it was never delivered before the reveal epoch, if it won
+//!    a fraud verdict, or if the call was never opened.
 //!
 //! What the registry buys over isolated vaults:
 //!
 //! * **no cherry-picking**: a caller cannot seal ten calls and show three. Every sealed call has a
-//!   number, and [`SignalDesk::stats`] counts the ones never opened;
+//!   number, and `stats` counts the ones never opened;
 //! * **an age**: the epoch the desk was opened is recorded, so a fresh desk cannot pose as an old
 //!   track record;
-//! * **proceeds follow results**: the caller is paid for a call only once it is open, and always into
-//!   the payout account fixed when the desk was opened.
+//! * **proceeds follow delivery and results**: the caller is paid for a sale only once it was
+//!   delivered, the call is open and the dispute window is over, and always into the payout account
+//!   fixed when the desk was opened.
 //!
 //! "Never opened" means the caller did not reveal the call, not that the trade lost: judging the trade
-//! is the scorer's job, from the published payloads and public market data.
+//! is the scorer's job, from the published payloads and public market data. What the template cannot
+//! guarantee: that a call is any good, or that a buyer keeps it to themselves.
 //!
 //! Payment is in TARI only: the engine lets a resource's issuer recall or freeze it in any vault, so a
 //! coin the caller issued would let them take the escrow back.
+//!
+//! The proofs and the keystream follow Crypt (the October contest's audited template), with their own
+//! domains: a proof made for one never verifies in the other.
 
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
@@ -35,10 +54,17 @@ use tari_template_lib::types::Hash32;
 
 /// Domain separator for the commitment hash.
 const DOMAIN: &[u8] = b"tari.ootle.signal_desk.commitment.v2";
+// Must stay byte-for-byte identical to the client (maquettes/crypto.js).
+const DOMAIN_AUTH: &[u8] = b"tari.ootle.signal_desk.auth.v1";
+const DOMAIN_DLEQ: &[u8] = b"tari.ootle.signal_desk.dleq.v1";
+const DOMAIN_KEY: &[u8] = b"tari.ootle.signal_desk.key.v1";
+const DOMAIN_STREAM: &[u8] = b"tari.ootle.signal_desk.stream.v1";
+const MSG_BUY: &[u8] = b"buy";
+const MSG_EPHEMERAL: &[u8] = b"ephemeral";
 
 type Blake2b256 = Blake2b<U32>;
 
-/// Epochs after `reveal_at_epoch` during which a call can still be opened. After that it refunds.
+/// Epochs after `reveal_at_epoch` during which a call can still be opened, and a delivery disputed.
 pub const REVEAL_WINDOW_EPOCHS: u64 = 10;
 /// Furthest reveal epoch a call may be sealed with, counted from the current epoch.
 pub const MAX_REVEAL_HORIZON_EPOCHS: u64 = 10_000;
@@ -48,10 +74,17 @@ pub const MIN_NONCE_LEN: usize = 16;
 pub const MAX_NONCE_LEN: usize = 64;
 /// Published in the reveal event (2 KiB per event), never stored in the component state.
 pub const MAX_PAYLOAD_LEN: usize = 1024;
-/// Bounds the registry. The component state is loaded on every call and capped at 1 MiB per substate;
-/// a revealed call costs no more state than a sealed one, about 150 bytes, so 1 000 calls stay far
-/// below the cap. The CI fills a desk to this limit and checks it still buys, refunds and pays out.
+/// Size of every delivered block: `len (u16 LE) || payload || len (u8) || nonce || zeros`. Ten SHA-512
+/// blocks of keystream; 1 280 hex characters, under the 2 KiB event limit. A call is deliverable only
+/// if `payload + nonce` fit in 637 bytes (a `v1|…` call is about 50).
+pub const BLOCK_LEN: usize = 640;
+/// Bounds the registry. The component state is loaded on every call and capped at 1 MiB per substate:
+/// a call costs about 150 bytes and a sale about 110, so 1 000 calls and 3 000 sales stay far below
+/// the cap. The CI fills a desk to these limits and checks it still works.
 pub const MAX_CALLS: u64 = 1_000;
+pub const MAX_SALES: u64 = 3_000;
+
+const _: () = assert!(BLOCK_LEN.is_multiple_of(64) && BLOCK_LEN / 64 <= 256);
 
 /// The commitment a caller seals as call number `seq` of `desk`, and the value `reveal` checks.
 ///
@@ -76,6 +109,30 @@ pub fn payload_is_canonical(payload: &str) -> bool {
     payload.bytes().all(|b| (0x20..=0x7E).contains(&b))
 }
 
+/// The payload and nonce a delivered block carries, if it is well formed: lengths in range, a
+/// canonical payload, zeros after the nonce. Anything else is a fraud at dispute.
+pub fn open_block(block: &[u8]) -> Option<(String, Vec<u8>)> {
+    if block.len() != BLOCK_LEN {
+        return None;
+    }
+    let plen = u16::from_le_bytes([block[0], block[1]]) as usize;
+    let payload = block.get(2..2 + plen)?;
+    let nlen = *block.get(2 + plen)? as usize;
+    let nonce = block.get(3 + plen..3 + plen + nlen)?;
+    let tail = &block[3 + plen + nlen..];
+    let payload = core::str::from_utf8(payload).ok()?;
+    let ok = plen <= MAX_PAYLOAD_LEN
+        && payload_is_canonical(payload)
+        && (MIN_NONCE_LEN..=MAX_NONCE_LEN).contains(&nlen)
+        && tail.iter().all(|&b| b == 0);
+    ok.then(|| (payload.to_string(), nonce.to_vec()))
+}
+
+/// Blake2b-256 of a ciphertext: what the state keeps of a delivery.
+pub fn ciphertext_hash(ciphertext: &[u8]) -> Hash32 {
+    Hash32::from_array(Blake2b256::digest(ciphertext).into())
+}
+
 fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -86,7 +143,91 @@ fn hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Data carried by a badge: which call of the desk it pays for, and when it was bought.
+fn len_prefix(data: &[u8]) -> [u8; 8] {
+    (data.len() as u64).to_le_bytes()
+}
+
+fn to_array64(hash: &Hash64) -> [u8; 64] {
+    let mut out = [0u8; 64];
+    out.copy_from_slice(hash.as_ref());
+    out
+}
+
+/// The context bound into every proof and keystream: this desk, the call and (after `buy`) the sale.
+fn context(desk: &ComponentAddress, seq: u64, sale: Option<u64>) -> Vec<u8> {
+    let mut out = desk.as_bytes().to_vec();
+    out.extend_from_slice(&seq.to_le_bytes());
+    if let Some(sale) = sale {
+        out.extend_from_slice(&sale.to_le_bytes());
+    }
+    out
+}
+
+/// Rejects anything that is not the canonical encoding of a non-identity Ristretto point. Every other
+/// Ristretto intrinsic panics on non-canonical input, and the identity as a key or nonce would make
+/// the shared secret public.
+fn assert_valid_point(point: &RistrettoPublicKeyBytes, what: &str) {
+    assert!(intrinsics::ristretto_is_canonical(point), "{} is not a canonical Ristretto point", what);
+    assert!(!intrinsics::ristretto_is_identity(point), "{} must not be the identity point", what);
+}
+
+/// Fiat-Shamir challenge over the domain, the context, an action message and the points.
+fn challenge(domain: &[u8], context: &[u8], message: &[u8], points: &[&RistrettoPublicKeyBytes]) -> Scalar32Bytes {
+    let dlen = len_prefix(domain);
+    let clen = len_prefix(context);
+    let mlen = len_prefix(message);
+    let mut parts: Vec<&[u8]> = vec![&dlen, domain, &clen, context, &mlen, message];
+    parts.extend(points.iter().map(|p| p.as_bytes()));
+    intrinsics::scalar_from_uniform_bytes(&to_array64(&intrinsics::hash_sha512_parts(&parts)))
+}
+
+/// `z·base - c·point`, the nonce commitment a compact Schnorr proof implies.
+fn implied_nonce(base: Option<&RistrettoPublicKeyBytes>, point: &RistrettoPublicKeyBytes, c: &Scalar32Bytes, z: &Scalar32Bytes) -> RistrettoPublicKeyBytes {
+    let zb = match base {
+        Some(base) => intrinsics::ristretto_mul(base, z),
+        None => intrinsics::ristretto_mul_base(z),
+    };
+    intrinsics::ristretto_sub(&zb, &intrinsics::ristretto_mul(point, c))
+}
+
+fn assert_canonical_scalars(c: &Scalar32Bytes, z: &Scalar32Bytes) {
+    assert!(intrinsics::scalar_is_canonical(c) && intrinsics::scalar_is_canonical(z), "proof scalars must be canonical");
+}
+
+/// Schnorr proof of knowledge of `log_G(key)`, over `message`, bound to `context`.
+fn assert_knows(context: &[u8], key: &RistrettoPublicKeyBytes, message: &[u8], c: &Scalar32Bytes, z: &Scalar32Bytes, who: &str) {
+    assert_canonical_scalars(c, z);
+    let a = implied_nonce(None, key, c, z);
+    assert!(challenge(DOMAIN_AUTH, context, message, &[key, &a]) == *c, "invalid {} proof", who);
+}
+
+/// Chaum-Pedersen proof that `log_G(key) = log_ephemeral(shared)`, bound to `context`.
+fn verify_shared(context: &[u8], key: &RistrettoPublicKeyBytes, ephemeral: &RistrettoPublicKeyBytes, shared: &RistrettoPublicKeyBytes, c: &Scalar32Bytes, z: &Scalar32Bytes) -> bool {
+    assert_canonical_scalars(c, z);
+    let a1 = implied_nonce(None, key, c, z);
+    let a2 = implied_nonce(Some(ephemeral), shared, c, z);
+    challenge(DOMAIN_DLEQ, context, &[], &[key, ephemeral, shared, &a1, &a2]) == *c
+}
+
+fn keystream(context: &[u8], key: &RistrettoPublicKeyBytes, ephemeral: &RistrettoPublicKeyBytes, shared: &RistrettoPublicKeyBytes) -> Vec<u8> {
+    let k = intrinsics::hash_sha512_parts(&[
+        &len_prefix(DOMAIN_KEY),
+        DOMAIN_KEY,
+        &len_prefix(context),
+        context,
+        key.as_bytes(),
+        ephemeral.as_bytes(),
+        shared.as_bytes(),
+    ]);
+    let mut stream = Vec::with_capacity(BLOCK_LEN);
+    for i in 0..(BLOCK_LEN / 64) as u8 {
+        let block = intrinsics::hash_sha512_parts(&[&len_prefix(DOMAIN_STREAM), DOMAIN_STREAM, k.as_ref(), &[i]]);
+        stream.extend_from_slice(block.as_ref());
+    }
+    stream
+}
+
+/// Data carried by a badge: which sale of which call of the desk it pays for, and when it was bought.
 #[derive(Debug, Clone, minicbor::Encode, minicbor::Decode, minicbor::CborLen)]
 pub struct BadgeData {
     #[n(0)]
@@ -95,6 +236,28 @@ pub struct BadgeData {
     pub commitment: [u8; 32],
     #[n(2)]
     pub bought_at_epoch: u64,
+    #[n(3)]
+    pub sale: u64,
+}
+
+/// Where one sale stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, minicbor::Encode, minicbor::Decode, minicbor::CborLen)]
+pub enum SaleStatus {
+    /// Paid, waiting for delivery.
+    #[n(0)]
+    Paid,
+    /// Delivered; may still be disputed until the end of the reveal window.
+    #[n(1)]
+    Delivered,
+    /// Disputed, and the template found the delivery matched the sealed call.
+    #[n(2)]
+    Upheld,
+    /// Disputed, and the delivery did not match the sealed call (or was unreadable). Refundable.
+    #[n(3)]
+    Fraud,
+    /// The buyer burnt the badge and got the price back.
+    #[n(4)]
+    Refunded,
 }
 
 #[template]
@@ -102,7 +265,7 @@ mod signal_desk {
     use super::*;
 
     pub struct SignalDesk {
-        /// Key that signed `open_desk`: the only key allowed to seal.
+        /// Key that signed `open_desk`: the only key allowed to seal and deliver.
         publisher: RistrettoPublicKeyBytes,
         /// Where proceeds always go. Fixed for the life of the desk: a method to change it would rest
         /// on the signer's key, and whoever could call it could redirect the proceeds and then withdraw.
@@ -111,9 +274,11 @@ mod signal_desk {
         opened_at_epoch: u64,
         /// The registry. Index = sequence number.
         calls: Vec<Call>,
+        /// Sales over all calls, bounded by `MAX_SALES`.
+        sales_count: u64,
         /// Escrow for every sale, in TARI.
         earnings: Vault,
-        /// Proceeds of opened calls not yet paid out. The rest of `earnings` backs refunds.
+        /// Proceeds of settled sales not yet paid out. The rest of `earnings` backs refunds.
         withdrawable: Amount,
     }
 
@@ -132,6 +297,7 @@ mod signal_desk {
                 payout,
                 opened_at_epoch,
                 calls: Vec::new(),
+                sales_count: 0,
                 earnings: Vault::new_empty(TARI_TOKEN),
                 withdrawable: Amount::zero(),
             })
@@ -140,14 +306,18 @@ mod signal_desk {
             .with_owner_rule(OwnerRule::None)
             .with_access_rules(
                 ComponentAccessRules::new()
-                    // Never add a `Proof` parameter to `seal`: the key rule holds only because no
-                    // caller can hand the publisher's authority to it as an argument.
+                    // Never add a `Proof` parameter to `seal` or `deliver`: the key rule holds only
+                    // because no caller can hand the publisher's authority to them as an argument.
                     .method("seal", rule!(public_key(publisher)))
-                    // Open to anyone: it can only move earned proceeds into the payout account.
-                    .method("withdraw", rule!(allow_all))
+                    .method("deliver", rule!(public_key(publisher)))
+                    // Open to anyone: each one checks its own conditions, and money only ever moves
+                    // to the payout account or out of a badge its holder burnt.
                     .method("buy", rule!(allow_all))
+                    .method("dispute", rule!(allow_all))
                     .method("reveal", rule!(allow_all))
+                    .method("settle", rule!(allow_all))
                     .method("refund", rule!(allow_all))
+                    .method("withdraw", rule!(allow_all))
                     .method("publisher", rule!(allow_all))
                     .method("payout", rule!(allow_all))
                     .method("opened_at_epoch", rule!(allow_all))
@@ -163,6 +333,7 @@ mod signal_desk {
                     .method("refunded", rule!(allow_all))
                     .method("revealed_at_epoch", rule!(allow_all))
                     .method("badge_resource", rule!(allow_all))
+                    .method("sale_status", rule!(allow_all))
                     .default(rule!(deny_all)),
             )
             .create()
@@ -178,12 +349,7 @@ mod signal_desk {
             let seq = self.calls.len() as u64;
             assert!(seq == expected_seq, "next call number is {}, not {}", seq, expected_seq);
             assert!(seq < MAX_CALLS, "this desk has reached {} calls", MAX_CALLS);
-            assert!(
-                reveal_at_epoch > now,
-                "reveal_at_epoch {} must be in the future (current epoch {})",
-                reveal_at_epoch,
-                now
-            );
+            assert!(reveal_at_epoch > now, "reveal_at_epoch {} must be in the future (current epoch {})", reveal_at_epoch, now);
             assert!(
                 reveal_at_epoch - now <= MAX_REVEAL_HORIZON_EPOCHS,
                 "reveal_at_epoch {} is more than {} epochs away",
@@ -218,18 +384,25 @@ mod signal_desk {
                 reveal_at_epoch,
                 price,
                 badges: badges.into(),
-                sold: 0,
+                sales: Vec::new(),
                 refunded: 0,
+                frauds: 0,
+                settled: false,
                 revealed_at_epoch: None,
             });
             seq
         }
 
-        /// Buys one badge for call `seq`. Returns the badge and the change (`None` on an exact
-        /// payment). Selling stops at the reveal epoch.
-        pub fn buy(&mut self, seq: u64, mut payment: Bucket) -> (Bucket, Option<Bucket>) {
+        /// Buys one sale of call `seq` for `buyer_key` (`(c, z)`: a proof by that key over `"buy"`,
+        /// bound to this desk and call). Returns the badge and the change (`None` on an exact payment).
+        /// Selling stops at the reveal epoch.
+        pub fn buy(&mut self, seq: u64, buyer_key: RistrettoPublicKeyBytes, c: Scalar32Bytes, z: Scalar32Bytes, mut payment: Bucket) -> (Bucket, Option<Bucket>) {
             let now = Consensus::current_epoch();
+            let desk = CallerContext::current_component_address();
             let i = self.index(seq);
+            assert!(self.sales_count < MAX_SALES, "this desk has reached {} sales", MAX_SALES);
+            assert_valid_point(&buyer_key, "buyer key");
+            assert_knows(&context(&desk, seq, None), &buyer_key, MSG_BUY, &c, &z, "buyer key");
             let call = &mut self.calls[i];
             assert!(call.revealed_at_epoch.is_none(), "call already revealed; nothing left to sell");
             assert!(now < call.reveal_at_epoch, "sale closed: the reveal epoch has been reached");
@@ -242,18 +415,94 @@ mod signal_desk {
             assert!(paid >= price, "paid {} but the price is {}", paid, price);
             let change = (paid > price).then(|| payment.take(paid - price));
 
+            let sale = call.sales.len() as u64;
             let badge = call.badges.mint_non_fungible(
                 NonFungibleId::random(),
-                &BadgeData {
-                    seq,
-                    commitment: call.commitment.into_array(),
-                    bought_at_epoch: now,
-                },
+                &BadgeData { seq, commitment: call.commitment.into_array(), bought_at_epoch: now, sale },
                 &(),
             );
-            call.sold += 1;
+            call.sales.push(Sale { buyer_key, ephemeral: None, ciphertext: None, status: SaleStatus::Paid });
+            self.sales_count += 1;
             self.earnings.deposit(payment);
+            emit_event("call_bought", metadata! {
+                "desk" => desk.to_string(),
+                "seq" => seq.to_string(),
+                "sale" => sale.to_string(),
+                "buyer_key" => buyer_key.to_string(),
+            });
             (badge, change)
+        }
+
+        /// Delivers call `seq` to the buyer of `sale`, before the reveal epoch. Publisher only.
+        /// `(rc, rz)` proves knowledge of `r` for `ephemeral = r·G`, bound to this sale: a delivery
+        /// cannot reuse another sale's `R` and turn a dispute into a decryption of that other sale.
+        pub fn deliver(&mut self, seq: u64, sale: u64, ephemeral: RistrettoPublicKeyBytes, rc: Scalar32Bytes, rz: Scalar32Bytes, ciphertext: Bytes) {
+            let now = Consensus::current_epoch();
+            let desk = CallerContext::current_component_address();
+            let i = self.index(seq);
+            let call = &mut self.calls[i];
+            assert!(call.revealed_at_epoch.is_none() && now < call.reveal_at_epoch, "too late to deliver: the reveal epoch has been reached");
+            let s = Self::sale_index(call, sale);
+            assert!(call.sales[s].status == SaleStatus::Paid, "sale #{} is not awaiting delivery", sale);
+            assert_valid_point(&ephemeral, "ephemeral key");
+            assert!(ciphertext.len() == BLOCK_LEN, "ciphertext must be exactly {} bytes", BLOCK_LEN);
+            assert_knows(&context(&desk, seq, Some(sale)), &ephemeral, MSG_EPHEMERAL, &rc, &rz, "ephemeral key");
+
+            let entry = &mut call.sales[s];
+            entry.ephemeral = Some(ephemeral);
+            entry.ciphertext = Some(ciphertext_hash(&ciphertext));
+            entry.status = SaleStatus::Delivered;
+            emit_event("call_delivered", metadata! {
+                "desk" => desk.to_string(),
+                "seq" => seq.to_string(),
+                "sale" => sale.to_string(),
+                "ephemeral" => hex(ephemeral.as_bytes()),
+                "ciphertext" => hex(&ciphertext),
+            });
+        }
+
+        /// Disputes the delivery of `sale`: publishes `shared = b·R` with a DLEQ proof (only the holder
+        /// of the buyer key can make it) and the ciphertext from the delivery event. The template
+        /// decrypts and judges. Allowed until the end of the reveal window. Anyone may submit it; the
+        /// verdict only changes the sale's status, and money only leaves through the badge.
+        pub fn dispute(&mut self, seq: u64, sale: u64, shared: RistrettoPublicKeyBytes, c: Scalar32Bytes, z: Scalar32Bytes, ciphertext: Bytes) {
+            let now = Consensus::current_epoch();
+            let desk = CallerContext::current_component_address();
+            let publisher = self.publisher;
+            let i = self.index(seq);
+            let call = &mut self.calls[i];
+            assert!(now < call.reveal_at_epoch.saturating_add(REVEAL_WINDOW_EPOCHS), "dispute window closed");
+            let s = Self::sale_index(call, sale);
+            let (buyer_key, ephemeral, delivered, status) = {
+                let e = &call.sales[s];
+                (e.buyer_key, e.ephemeral, e.ciphertext, e.status)
+            };
+            assert!(status == SaleStatus::Delivered, "sale #{} has no delivery to dispute", sale);
+            assert!(delivered == Some(ciphertext_hash(&ciphertext)), "not the ciphertext of this delivery");
+            assert_valid_point(&shared, "shared point");
+            let ctx = context(&desk, seq, Some(sale));
+            let ephemeral = ephemeral.expect("a delivery has an ephemeral key");
+            assert!(verify_shared(&ctx, &buyer_key, &ephemeral, &shared, &c, &z), "invalid proof that the shared point is the buyer's");
+
+            let stream = keystream(&ctx, &buyer_key, &ephemeral, &shared);
+            let block: Vec<u8> = ciphertext.iter().zip(stream.iter()).map(|(c, k)| c ^ k).collect();
+            // The caller wins only by delivering exactly the sealed call, in a form the client reads.
+            let honest = open_block(&block)
+                .map(|(payload, nonce)| commitment_of(&desk.to_string(), publisher.as_bytes(), seq, &payload, &nonce) == call.commitment)
+                .unwrap_or(false);
+            if honest {
+                call.sales[s].status = SaleStatus::Upheld;
+            } else {
+                call.sales[s].status = SaleStatus::Fraud;
+                call.frauds += 1;
+            }
+            emit_event("call_disputed", metadata! {
+                "desk" => desk.to_string(),
+                "seq" => seq.to_string(),
+                "sale" => sale.to_string(),
+                "verdict" => (if honest { "upheld" } else { "fraud" }).to_string(),
+                "shared" => hex(shared.as_bytes()),
+            });
         }
 
         /// Opens call `seq` and publishes it in the `call_revealed` event. Callable by anyone during
@@ -265,70 +514,81 @@ mod signal_desk {
             let publisher = self.publisher;
             let desk = CallerContext::current_component_address().to_string();
             let call = &mut self.calls[i];
-            assert!(
-                now >= call.reveal_at_epoch,
-                "too early: reveal opens at epoch {} (current {})",
-                call.reveal_at_epoch,
-                now
-            );
+            assert!(now >= call.reveal_at_epoch, "too early: reveal opens at epoch {} (current {})", call.reveal_at_epoch, now);
             let refund_from = call.reveal_at_epoch.saturating_add(REVEAL_WINDOW_EPOCHS);
             assert!(now < refund_from, "reveal window closed at epoch {}; the call is refunding", refund_from);
             assert!(call.revealed_at_epoch.is_none(), "already revealed");
             assert!(payload.len() <= MAX_PAYLOAD_LEN, "payload longer than {} bytes", MAX_PAYLOAD_LEN);
             assert!(payload_is_canonical(&payload), "payload must be printable ASCII");
-            assert!(
-                (MIN_NONCE_LEN..=MAX_NONCE_LEN).contains(&nonce.len()),
-                "nonce must be {} to {} bytes",
-                MIN_NONCE_LEN,
-                MAX_NONCE_LEN
-            );
+            assert!((MIN_NONCE_LEN..=MAX_NONCE_LEN).contains(&nonce.len()), "nonce must be {} to {} bytes", MIN_NONCE_LEN, MAX_NONCE_LEN);
             assert!(
                 commitment_of(&desk, publisher.as_bytes(), seq, &payload, &nonce) == call.commitment,
                 "payload and nonce do not open this commitment"
             );
 
-            let proceeds = call.price.checked_mul(Amount::from_u64(call.sold)).expect("proceeds overflow");
             call.revealed_at_epoch = Some(now);
             emit_event("call_revealed", metadata! {
                 "desk" => desk,
                 "seq" => seq.to_string(),
                 "epoch" => now.to_string(),
-                "sold" => call.sold.to_string(),
+                "sold" => call.sales.len().to_string(),
                 "payload" => payload,
                 "nonce" => hex(&nonce),
             });
+        }
+
+        /// Once the reveal window of an opened call is over (no dispute can come any more), makes the
+        /// price of every delivered sale that was not a fraud payable. Anyone may trigger it, once.
+        pub fn settle(&mut self, seq: u64) {
+            let now = Consensus::current_epoch();
+            let i = self.index(seq);
+            let call = &mut self.calls[i];
+            assert!(call.revealed_at_epoch.is_some(), "call never opened: its sales refund");
+            assert!(now >= call.reveal_at_epoch.saturating_add(REVEAL_WINDOW_EPOCHS), "disputes are open until epoch {}", call.reveal_at_epoch.saturating_add(REVEAL_WINDOW_EPOCHS));
+            assert!(!call.settled, "already settled");
+            let earned = call.sales.iter().filter(|s| matches!(s.status, SaleStatus::Delivered | SaleStatus::Upheld)).count() as u64;
+            let proceeds = call.price.checked_mul(Amount::from_u64(earned)).expect("proceeds overflow");
+            call.settled = true;
             self.withdrawable = self.withdrawable.checked_add(proceeds).expect("withdrawable overflows");
         }
 
-        /// Refunds badges of call `seq` once its reveal window has closed without a reveal.
+        /// Refunds the sales of call `seq` whose badges are in `badges`: a sale never delivered once the
+        /// reveal epoch is reached, a sale judged a fraud, or any sale of a call never opened once its
+        /// reveal window has closed.
         pub fn refund(&mut self, seq: u64, badges: Bucket) -> Bucket {
             let now = Consensus::current_epoch();
             let i = self.index(seq);
             let call = &mut self.calls[i];
-            assert!(call.revealed_at_epoch.is_none(), "call revealed; nothing to refund");
-            let refund_from = call.reveal_at_epoch.saturating_add(REVEAL_WINDOW_EPOCHS);
-            assert!(now >= refund_from, "refunds open at epoch {} (current {})", refund_from, now);
-            assert!(
-                badges.resource_address() == call.badges.resource_address(),
-                "not a badge of this call"
-            );
-            let count = badges.amount();
-            assert!(count.is_positive(), "no badge to refund");
-            let due = call.price.checked_mul(count).expect("refund amount overflows");
+            assert!(badges.resource_address() == call.badges.resource_address(), "not a badge of this call");
+            let nfts = badges.get_non_fungibles();
+            assert!(!nfts.is_empty(), "no badge to refund");
+            let never_opened = call.revealed_at_epoch.is_none() && now >= call.reveal_at_epoch.saturating_add(REVEAL_WINDOW_EPOCHS);
+            for nft in &nfts {
+                let data: BadgeData = nft.get_data();
+                assert!(data.seq == seq, "badge of another call");
+                let s = Self::sale_index(call, data.sale);
+                let status = call.sales[s].status;
+                let due = match status {
+                    SaleStatus::Fraud => true,
+                    SaleStatus::Paid => now >= call.reveal_at_epoch,
+                    SaleStatus::Delivered | SaleStatus::Upheld => never_opened,
+                    SaleStatus::Refunded => false,
+                };
+                assert!(due, "sale #{} has nothing to refund", data.sale);
+                call.sales[s].status = SaleStatus::Refunded;
+            }
+            let count = nfts.len() as u64;
+            let due = call.price.checked_mul(Amount::from_u64(count)).expect("refund amount overflows");
             badges.burn();
-            call.refunded += count.to_u64_checked().expect("badge count fits in u64");
+            call.refunded += count;
             self.earnings.withdraw(due)
         }
 
-        /// Pays `amount` of the proceeds of opened calls into the payout account. Anyone may trigger
-        /// it: the money can only go to the publisher's payout account.
+        /// Pays `amount` of the settled proceeds into the payout account. Anyone may trigger it: the
+        /// money can only go to the publisher's payout account.
         pub fn withdraw(&mut self, amount: Amount) {
             assert!(amount.is_positive(), "amount must be positive");
-            assert!(
-                amount <= self.withdrawable,
-                "only proceeds of opened calls can be withdrawn ({} available)",
-                self.withdrawable
-            );
+            assert!(amount <= self.withdrawable, "only settled proceeds can be withdrawn ({} available)", self.withdrawable);
             // State first, then the outside call.
             self.withdrawable = self.withdrawable.checked_sub(amount).expect("withdrawable underflows");
             let bucket = self.earnings.withdraw(amount);
@@ -353,19 +613,18 @@ mod signal_desk {
             self.calls.len() as u64
         }
 
-        /// `(sealed, opened, never opened)`. Never opened counts calls whose reveal window closed
-        /// without a reveal.
-        pub fn stats(&self) -> (u64, u64, u64) {
+        /// `(sealed, opened, never opened, judged fraudulent)`. Never opened counts calls whose reveal
+        /// window closed without a reveal; fraudulent counts calls with at least one fraud verdict.
+        pub fn stats(&self) -> (u64, u64, u64, u64) {
             let now = Consensus::current_epoch();
             let opened = self.calls.iter().filter(|c| c.revealed_at_epoch.is_some()).count() as u64;
             let lost = self
                 .calls
                 .iter()
-                .filter(|c| {
-                    c.revealed_at_epoch.is_none() && now >= c.reveal_at_epoch.saturating_add(REVEAL_WINDOW_EPOCHS)
-                })
+                .filter(|c| c.revealed_at_epoch.is_none() && now >= c.reveal_at_epoch.saturating_add(REVEAL_WINDOW_EPOCHS))
                 .count() as u64;
-            (self.calls.len() as u64, opened, lost)
+            let frauds = self.calls.iter().filter(|c| c.frauds > 0).count() as u64;
+            (self.calls.len() as u64, opened, lost, frauds)
         }
 
         pub fn withdrawable(&self) -> Amount {
@@ -395,7 +654,7 @@ mod signal_desk {
         }
 
         pub fn sold(&self, seq: u64) -> u64 {
-            self.calls[self.index(seq)].sold
+            self.calls[self.index(seq)].sales.len() as u64
         }
 
         pub fn refunded(&self, seq: u64) -> u64 {
@@ -410,9 +669,20 @@ mod signal_desk {
             self.calls[self.index(seq)].badges.resource_address()
         }
 
+        /// `"Paid"`, `"Delivered"`, `"Upheld"`, `"Fraud"` or `"Refunded"`.
+        pub fn sale_status(&self, seq: u64, sale: u64) -> String {
+            let call = &self.calls[self.index(seq)];
+            format!("{:?}", call.sales[Self::sale_index(call, sale)].status)
+        }
+
         fn index(&self, seq: u64) -> usize {
             assert!(seq < self.calls.len() as u64, "no call #{} in this desk", seq);
             seq as usize
+        }
+
+        fn sale_index(call: &Call, sale: u64) -> usize {
+            assert!(sale < call.sales.len() as u64, "no sale #{} for this call", sale);
+            sale as usize
         }
     }
 
@@ -425,25 +695,53 @@ mod signal_desk {
         pub price: Amount,
         /// One badge resource per call, mintable and burnable only by the desk.
         pub badges: ResourceManager,
-        pub sold: u64,
+        pub sales: Vec<Sale>,
         pub refunded: u64,
+        pub frauds: u64,
+        pub settled: bool,
         pub revealed_at_epoch: Option<u64>,
+    }
+
+    /// One sale of a call: the buyer's key, and the delivery once made (its ephemeral key and the
+    /// hash of the ciphertext, which itself lives in the `call_delivered` event).
+    pub struct Sale {
+        pub buyer_key: RistrettoPublicKeyBytes,
+        pub ephemeral: Option<RistrettoPublicKeyBytes>,
+        pub ciphertext: Option<Hash32>,
+        pub status: SaleStatus,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    //! The commitment scheme, natively: if two different payloads could open one commitment, the
-    //! track-record claim would collapse.
+    //! The commitment scheme and the delivered block, natively: if two different payloads could open
+    //! one commitment, or a block could read two ways, the track-record claim would collapse.
 
-    use super::{commitment_of, hex, payload_is_canonical};
+    use super::{commitment_of, hex, open_block, payload_is_canonical, BLOCK_LEN};
 
     const KEY: &[u8] = &[7u8; 32];
     const DESK: &str = "component_aa";
 
+    fn block(payload: &[u8], nonce: &[u8]) -> Vec<u8> {
+        let mut b = (payload.len() as u16).to_le_bytes().to_vec();
+        b.extend_from_slice(payload);
+        b.push(nonce.len() as u8);
+        b.extend_from_slice(nonce);
+        b.resize(BLOCK_LEN, 0);
+        b
+    }
+
     #[test]
     fn the_commitment_is_deterministic() {
         assert_eq!(commitment_of(DESK, KEY, 0, "BTCUSDT long", b"n"), commitment_of(DESK, KEY, 0, "BTCUSDT long", b"n"));
+    }
+
+    /// Fixed vector shared with the web client (maquettes/chain.js `commitmentOf`): if either side
+    /// changes the scheme, this test or the client's own check fails.
+    #[test]
+    fn the_commitment_matches_the_web_client() {
+        let c = commitment_of(DESK, KEY, 3, "v1|BTCUSDT|LONG|62000|65000|60500|2026-11-20T00:00Z", &[9u8; 32]);
+        assert_eq!(hex(&c.into_array()), "f0e46bdaecd2b4b0a4615f5aaf8dc3c41a6c4ec570bc939d665170e5badd65cb");
     }
 
     #[test]
@@ -467,6 +765,21 @@ mod tests {
         for bad in ["BTC \u{202E}trohs", "BTC long\nshort", "BTC long\u{2028}short", "BTC\u{061C}", "BTC\u{00AD}", "BTC\u{FE0F}", "BTC\u{200B}", "é"] {
             assert!(!payload_is_canonical(bad), "{bad:?} must be refused");
         }
+    }
+
+    #[test]
+    fn a_well_formed_block_opens_and_nothing_else_does() {
+        let nonce = [5u8; 32];
+        assert_eq!(open_block(&block(b"v1|BTCUSDT|LONG", &nonce)), Some(("v1|BTCUSDT|LONG".to_string(), nonce.to_vec())));
+        let mut trailing = block(b"v1|BTCUSDT|LONG", &nonce);
+        trailing[BLOCK_LEN - 1] = 1;
+        assert_eq!(open_block(&trailing), None, "bytes after the nonce");
+        assert_eq!(open_block(&block(b"v1|BTC\nLONG", &nonce)), None, "non-canonical payload");
+        assert_eq!(open_block(&block(b"v1", &[5u8; 8])), None, "short nonce");
+        let mut long = vec![0u8; BLOCK_LEN];
+        long[0..2].copy_from_slice(&(BLOCK_LEN as u16).to_le_bytes());
+        assert_eq!(open_block(&long), None, "length past the block");
+        assert_eq!(open_block(&block(b"x", &nonce)[..BLOCK_LEN - 1]), None, "short block");
     }
 
     #[test]

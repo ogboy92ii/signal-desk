@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use tari_template_lib_types::{bytes::Bytes, constants::TARI_TOKEN, Amount, ComponentAddress, ResourceAddress};
+use tari_template_lib_types::{bytes::Bytes, Amount, ComponentAddress, ResourceAddress};
 use tari_template_test_tooling::transaction::args;
 
 const A: &str = "v1|ETHUSDT|LONG|3100|3400|2950|2026-11-20T00:00Z";
@@ -18,22 +18,24 @@ fn an_unopened_call_counts_as_lost_and_refunds_its_buyers() {
     let buried = seal(&mut test, desk, B, 5);
     assert_eq!((opened, buried), (0, 1), "calls are numbered in the order they are sealed");
 
-    buy(&mut test, desk, opened);
-    let (buyer, proof, key) = buy(&mut test, desk, buried);
-    let (buyer2, proof2, key2) = buy(&mut test, desk, buried);
-    let badges: ResourceAddress = test.call_method(desk, "badge_resource", args![buried], vec![]);
+    let first = buy(&mut test, desk, opened);
+    deliver(&mut test, desk, &first, A);
+    // A buried call refunds even its delivered sales: hiding a call must cost the caller.
+    let delivered = buy(&mut test, desk, buried);
+    deliver(&mut test, desk, &delivered, B);
+    let other = buy(&mut test, desk, buried);
 
     set_epoch(&mut test, 5);
     reveal(&mut test, desk, opened, A);
 
-    // Refunds wait for the end of the reveal window.
-    let early = refund_tx(&mut test, desk, buried, badges, buyer, &key);
-    expect_reject(&mut test, early, vec![proof.clone()], "refunds open at epoch");
+    // Refunds of the buried call's delivered sale wait for the end of the reveal window.
+    let early = refund_of(&mut test, desk, &delivered);
+    expect_reject(&mut test, early, vec![delivered.proof.clone()], "nothing to refund");
 
     set_epoch(&mut test, 5 + REVEAL_WINDOW_EPOCHS);
     assert_eq!(
-        test.call_method::<(u64, u64, u64)>(desk, "stats", args![], vec![]),
-        (2, 1, 1),
+        test.call_method::<(u64, u64, u64, u64)>(desk, "stats", args![], vec![]),
+        (2, 1, 1, 0),
         "the buried call must show as never opened"
     );
 
@@ -45,31 +47,21 @@ fn an_unopened_call_counts_as_lost_and_refunds_its_buyers() {
         .build_and_seal(&key0);
     expect_reject(&mut test, late, vec![], "reveal window closed");
 
-    let tx = refund_tx(&mut test, desk, buried, badges, buyer, &key);
-    test.execute_expect_success(tx, vec![proof.clone()]);
+    let tx = refund_of(&mut test, desk, &delivered);
+    test.execute_expect_success(tx, vec![delivered.proof.clone()]);
     // The badge is burnt: the same buyer has nothing left to refund.
-    let twice = refund_tx(&mut test, desk, buried, badges, buyer, &key);
-    test.execute_expect_failure(twice, vec![proof]);
-    let tx = refund_tx(&mut test, desk, buried, badges, buyer2, &key2);
-    test.execute_expect_success(tx, vec![proof2]);
+    let twice = refund_of(&mut test, desk, &delivered);
+    test.execute_expect_failure(twice, vec![delivered.proof.clone()]);
+    let tx = refund_of(&mut test, desk, &other);
+    test.execute_expect_success(tx, vec![other.proof.clone()]);
     assert_eq!(test.call_method::<u64>(desk, "refunded", args![buried], vec![]), 2);
 
-    // Only the opened call's proceeds are payable; the refunds left exactly those in escrow.
+    // A buried call cannot be settled; the opened one pays its delivered sale.
+    let no = test.transaction().call_method(desk, "settle", args![buried]).build_and_seal(&key0);
+    expect_reject(&mut test, no, vec![], "never opened");
+    test.call_method::<()>(desk, "settle", args![opened], vec![]);
     assert_eq!(test.call_method::<Amount>(desk, "withdrawable", args![], vec![]), Amount::from_u64(PRICE));
     assert_eq!(test.call_method::<Amount>(desk, "earnings_balance", args![], vec![]), Amount::from_u64(PRICE));
-}
-
-#[test]
-fn an_opened_call_does_not_refund() {
-    let (mut test, desk) = new_desk();
-    let seq = seal(&mut test, desk, A, 5);
-    let (buyer, proof, key) = buy(&mut test, desk, seq);
-    let badges: ResourceAddress = test.call_method(desk, "badge_resource", args![seq], vec![]);
-    set_epoch(&mut test, 5);
-    reveal(&mut test, desk, seq, A);
-    set_epoch(&mut test, 5 + REVEAL_WINDOW_EPOCHS);
-    let tx = refund_tx(&mut test, desk, seq, badges, buyer, &key);
-    expect_reject(&mut test, tx, vec![proof], "nothing to refund");
 }
 
 #[test]
@@ -77,12 +69,12 @@ fn a_badge_of_one_call_cannot_refund_another() {
     let (mut test, desk) = new_desk();
     let first = seal(&mut test, desk, A, 5);
     let second = seal(&mut test, desk, B, 5);
-    let (buyer, proof, key) = buy(&mut test, desk, first);
+    let buyer = buy(&mut test, desk, first);
     buy(&mut test, desk, second);
     let first_badges: ResourceAddress = test.call_method(desk, "badge_resource", args![first], vec![]);
     set_epoch(&mut test, 5 + REVEAL_WINDOW_EPOCHS);
-    let tx = refund_tx(&mut test, desk, second, first_badges, buyer, &key);
-    expect_reject(&mut test, tx, vec![proof], "not a badge of this call");
+    let tx = refund_tx(&mut test, desk, second, first_badges, buyer.account, &buyer.key);
+    expect_reject(&mut test, tx, vec![buyer.proof], "not a badge of this call");
 }
 
 #[test]
@@ -136,11 +128,15 @@ fn only_the_publisher_seals_and_proceeds_only_reach_the_payout_account() {
     assert_eq!(test.call_method::<u64>(desk, "call_count", args![], vec![]), 0);
 
     let seq = seal(&mut test, desk, A, 5);
-    buy(&mut test, desk, seq);
+    let buyer = buy(&mut test, desk, seq);
+    deliver(&mut test, desk, &buyer, A);
     set_epoch(&mut test, 5);
     reveal(&mut test, desk, seq, A);
+    set_epoch(&mut test, 5 + REVEAL_WINDOW_EPOCHS);
 
-    // Anyone may trigger the payout, but the money lands in the publisher's payout account.
+    // Anyone may settle and trigger the payout, but the money lands in the publisher's payout account.
+    let settle = test.transaction().call_method(desk, "settle", args![seq]).build_and_seal(&other_key);
+    test.execute_expect_success(settle, vec![]);
     let before = payout_balance(&mut test, desk);
     let poke = test
         .transaction()
@@ -149,9 +145,9 @@ fn only_the_publisher_seals_and_proceeds_only_reach_the_payout_account() {
     test.execute_expect_success(poke, vec![]);
     assert_eq!(payout_balance(&mut test, desk), before.checked_add(Amount::from_u64(PRICE)).unwrap());
 
-    // And nothing more than the earned proceeds.
+    // And nothing more than the settled proceeds.
     let more = test.transaction().call_method(desk, "withdraw", args![Amount::from_u64(1)]).build_and_seal(&other_key);
-    expect_reject(&mut test, more, vec![], "only proceeds of opened calls");
+    expect_reject(&mut test, more, vec![], "only settled proceeds");
 }
 
 #[test]
@@ -184,14 +180,9 @@ fn bad_terms_payloads_and_unknown_calls_are_refused() {
     expect_reject(&mut test, short, vec![], "nonce must be");
 
     let (buyer, proof, bkey) = test.create_funded_account();
-    let ghost = test
-        .transaction()
-        .call_method(buyer, "withdraw", args![TARI_TOKEN, Amount::from_u64(PRICE)])
-        .put_last_instruction_output_on_workspace("payment")
-        .call_method(desk, "buy", args![7u64, Workspace("payment")])
-        .put_last_instruction_output_on_workspace("out")
-        .call_method(buyer, "deposit", args![Workspace("out.0")])
-        .build_and_seal(&bkey);
+    let b = client::secret(b"ghost");
+    let pk = client::prove_knows(&client::context(&desk, 7, None), &b, b"buy");
+    let ghost = buy_tx(&mut test, desk, 7, buyer, &bkey, client::public(&b), pk);
     expect_reject(&mut test, ghost, vec![proof], "no call #7");
 }
 
@@ -211,11 +202,14 @@ fn a_full_desk_refuses_more_calls_and_still_works() {
         .build_and_seal(&key);
     expect_reject(&mut test, over, vec![], "has reached");
 
-    // The state of a full desk still loads: the last call sells, opens and pays out.
+    // The state of a full desk still loads: the last call sells, delivers, opens and pays out.
     let last = MAX_CALLS - 1;
-    buy(&mut test, desk, last);
+    let buyer = buy(&mut test, desk, last);
+    deliver(&mut test, desk, &buyer, A);
     set_epoch(&mut test, 5);
     assert_eq!(reveal(&mut test, desk, last, A), A);
+    set_epoch(&mut test, 5 + REVEAL_WINDOW_EPOCHS);
+    test.call_method::<()>(desk, "settle", args![last], vec![]);
     test.call_method::<()>(desk, "withdraw", args![Amount::from_u64(PRICE)], vec![]);
-    assert_eq!(test.call_method::<(u64, u64, u64)>(desk, "stats", args![], vec![]), (MAX_CALLS, 1, 0));
+    assert_eq!(test.call_method::<(u64, u64, u64, u64)>(desk, "stats", args![], vec![]), (MAX_CALLS, 1, MAX_CALLS - 1, 0));
 }

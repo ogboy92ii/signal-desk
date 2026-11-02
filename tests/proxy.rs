@@ -41,9 +41,12 @@ fn a_component_the_publisher_signs_for_cannot_seal_in_their_name() {
 fn a_component_triggering_a_payout_still_pays_the_payout_account() {
     let (mut test, desk, proxy) = desk_and_proxy();
     let seq = seal(&mut test, desk, A, 5);
-    buy(&mut test, desk, seq);
+    let buyer = buy(&mut test, desk, seq);
+    deliver(&mut test, desk, &buyer, A);
     set_epoch(&mut test, 5);
     reveal(&mut test, desk, seq, A);
+    set_epoch(&mut test, 5 + REVEAL_WINDOW_EPOCHS);
+    test.call_method::<()>(desk, "settle", args![seq], vec![]);
 
     // Calls through the proxy do reach the desk: `withdraw` is open, and the money cannot be diverted.
     let (_, _, stranger) = test.create_funded_account();
