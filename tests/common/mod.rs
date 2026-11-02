@@ -237,7 +237,7 @@ pub fn buy_tx(test: &mut TemplateTest, desk: ComponentAddress, seq: u64, account
 pub fn buy(test: &mut TemplateTest, desk: ComponentAddress, seq: u64) -> Buyer {
     let (account, proof, key) = test.create_funded_account();
     let sale: u64 = test.call_method(desk, "sold", args![seq], vec![]);
-    let b = client::secret(&[account.as_bytes().as_slice(), &seq.to_le_bytes()].concat());
+    let b = client::secret(format!("{account}:{seq}").as_bytes());
     let pk = client::prove_knows(&client::context(&desk, seq, None), &b, b"buy");
     let tx = buy_tx(test, desk, seq, account, &key, client::public(&b), pk);
     test.execute_expect_success(tx, vec![proof.clone()]);
