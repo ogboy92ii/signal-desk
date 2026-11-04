@@ -33,10 +33,20 @@ fn set_epoch(test: &mut TemplateTest, epoch: u64) {
 }
 
 fn new_board() -> (TemplateTest, ComponentAddress) {
+    new_league(true)
+}
+
+fn new_league(open: bool) -> (TemplateTest, ComponentAddress) {
     let mut test = TemplateTest::new_cwd(["."]);
     set_epoch(&mut test, 1);
-    let board: ComponentAddress = test.call_function("SignalForecasts", "open_board", args![], vec![]);
+    let board: ComponentAddress = test.call_function("SignalForecasts", "open_board", args![String::new(), "league".to_string(), open], vec![]);
     (test, board)
+}
+
+type Keys = Vec<RistrettoPublicKeyBytes>;
+
+fn members_tx(test: &mut TemplateTest, board: ComponentAddress, add: Keys, remove: Keys, block: Keys, unblock: Keys, signer: &RistrettoSecretKey) -> Transaction {
+    test.transaction().call_method(board, "update_members", args![add, remove, block, unblock]).build_and_seal(signer)
 }
 
 fn ask(test: &mut TemplateTest, board: ComponentAddress, close: u64) -> u64 {
@@ -204,4 +214,103 @@ fn a_full_board_refuses_more_and_still_works() {
     let tx = reveal_tx(&mut test, board, last, 0, "98500", &p.key);
     test.execute_expect_success(tx, vec![]);
     test.call_method::<()>(board, "resolve", args![last, "98500".to_string()], vec![]);
+}
+
+#[test]
+fn only_the_organizer_names_the_league_and_nothing_hidden_gets_in() {
+    let (mut test, board) = new_board();
+    let key = test.secret_key().clone();
+    let other = player(&mut test);
+    let stranger = test.transaction().call_method(board, "set_profile", args!["Pirates".to_string(), "sport".to_string(), true]).build_and_seal(&other.key);
+    test.execute_expect_failure(stranger, vec![]);
+    let hidden = test.transaction().call_method(board, "set_profile", args!["BTC \u{202E}".to_string(), "sport".to_string(), true]).build_and_seal(&key);
+    expect_reject(&mut test, hidden, "hidden characters");
+    let path = test.transaction().call_method(board, "set_profile", args!["Chads".to_string(), "../x.webp".to_string(), true]).build_and_seal(&key);
+    expect_reject(&mut test, path, "lowercase letters");
+    let tx = test.transaction().call_method(board, "set_profile", args!["Les Chads du BTC".to_string(), "sport".to_string(), true]).build_and_seal(&key);
+    let result = test.execute_expect_success(tx, vec![]);
+    let event = result.finalize.events.iter().find(|e| e.topic().ends_with(".profile_updated")).expect("profile_updated");
+    assert_eq!(event.payload().get_str("name"), Some("Les Chads du BTC"));
+}
+
+#[test]
+fn the_organizer_uploads_a_picture_and_only_image_files_are_accepted() {
+    let (mut test, board) = new_board();
+    let key = test.secret_key().clone();
+    let other = player(&mut test);
+    let mut webp = b"RIFF\0\0\0\0WEBPVP8 ".to_vec();
+    webp.resize(20_000, 7);
+    let foreign = test.transaction().call_method(board, "set_picture", args![Bytes::from_vec(webp.clone())]).build_and_seal(&other.key);
+    test.execute_expect_failure(foreign, vec![]);
+    let svg = test.transaction().call_method(board, "set_picture", args![Bytes::from_vec(b"<svg onload=alert(1)></svg>".to_vec())]).build_and_seal(&key);
+    expect_reject(&mut test, svg, "webp, png or jpeg");
+    let mut huge = webp.clone();
+    huge.resize(24_577, 7);
+    let big = test.transaction().call_method(board, "set_picture", args![Bytes::from_vec(huge)]).build_and_seal(&key);
+    expect_reject(&mut test, big, "at most");
+    let tx = test.transaction().call_method(board, "set_picture", args![Bytes::from_vec(webp)]).build_and_seal(&key);
+    let result = test.execute_expect_success(tx, vec![]);
+    let event = result.finalize.events.iter().find(|e| e.topic().ends_with(".picture_updated")).expect("picture_updated");
+    assert_eq!(event.payload().get_str("size"), Some("20000"));
+    // The board still works with a picture in its state.
+    let q = ask(&mut test, board, 5);
+    let alice = player(&mut test);
+    let tx = seal_tx(&mut test, board, q, &alice, "1");
+    test.execute_expect_success(tx, vec![alice.proof.clone()]);
+}
+
+#[test]
+fn a_closed_league_lets_only_its_members_and_organizer_seal() {
+    let (mut test, board) = new_league(false);
+    let key = test.secret_key().clone();
+    let q = ask(&mut test, board, 5);
+    let alice = player(&mut test);
+    let bob = player(&mut test);
+    let tx = seal_tx(&mut test, board, q, &alice, "98500");
+    expect_reject(&mut test, tx, "only its members");
+    // The organizer seals in their own closed league.
+    let organizer = Player { public: test.to_public_key_bytes(), proof: NonFungibleAddress::from_public_key(test.to_public_key_bytes()), key: key.clone() };
+    let tx = seal_tx(&mut test, board, q, &organizer, "98000");
+    test.execute_expect_success(tx, vec![]);
+    // A stranger cannot add themself.
+    let tx = members_tx(&mut test, board, vec![bob.public], vec![], vec![], vec![], &bob.key);
+    test.execute_expect_failure(tx, vec![]);
+    let tx = members_tx(&mut test, board, vec![alice.public], vec![], vec![], vec![], &key);
+    test.execute_expect_success(tx, vec![]);
+    assert!(test.call_method::<bool>(board, "can_seal", args![alice.public], vec![]));
+    assert!(!test.call_method::<bool>(board, "can_seal", args![bob.public], vec![]));
+    let tx = seal_tx(&mut test, board, q, &alice, "98500");
+    test.execute_expect_success(tx, vec![alice.proof.clone()]);
+    // Removed: no new forecast, but the sealed one stays and still opens.
+    let tx = members_tx(&mut test, board, vec![], vec![alice.public], vec![], vec![], &key);
+    test.execute_expect_success(tx, vec![]);
+    let q2 = ask(&mut test, board, 5);
+    let tx = seal_tx(&mut test, board, q2, &alice, "1");
+    expect_reject(&mut test, tx, "only its members");
+    set_epoch(&mut test, 5);
+    let tx = reveal_tx(&mut test, board, q, 1, "98500", &alice.key);
+    test.execute_expect_success(tx, vec![]);
+}
+
+#[test]
+fn a_blocked_key_never_seals_and_the_organizer_cannot_block_themself() {
+    let (mut test, board) = new_board();
+    let key = test.secret_key().clone();
+    let q = ask(&mut test, board, 5);
+    let mallory = player(&mut test);
+    let tx = members_tx(&mut test, board, vec![], vec![], vec![mallory.public], vec![], &key);
+    test.execute_expect_success(tx, vec![]);
+    let tx = seal_tx(&mut test, board, q, &mallory, "1");
+    expect_reject(&mut test, tx, "blocked");
+    let me = test.to_public_key_bytes();
+    let tx = members_tx(&mut test, board, vec![], vec![], vec![me], vec![], &key);
+    expect_reject(&mut test, tx, "cannot block themself");
+    let tx = members_tx(&mut test, board, vec![], vec![], vec![], vec![mallory.public], &key);
+    test.execute_expect_success(tx, vec![]);
+    let tx = seal_tx(&mut test, board, q, &mallory, "1");
+    test.execute_expect_success(tx, vec![mallory.proof.clone()]);
+    // At most 50 changes per call.
+    let many: Keys = (0..51).map(|i| signer(10_000 + i).public).collect();
+    let tx = members_tx(&mut test, board, many, vec![], vec![], vec![], &key);
+    expect_reject(&mut test, tx, "changes per call");
 }

@@ -14,6 +14,11 @@
 //!    another key never opens.
 //! 4. `resolve`: after the close, the organizer publishes the outcome (`question_resolved`).
 //!
+//! League v2: the organizer names the league and picks its image (`set_profile`), keeps it open or
+//! closes it to its members, and adds, removes, blocks or unblocks keys (`update_members`). `seal`
+//! refuses a blocked key, and in a closed league any key that is neither a member nor the organizer.
+//! Forecasts already sealed stay on the board: the history is never rewritten.
+//!
 //! Points are counted off chain from these public events, by a script anyone can rerun. The organizer
 //! is trusted for one thing only, the outcome, and publishes it where everyone can check it against
 //! its source; the forecasts and their timing are the chain's.
@@ -40,6 +45,25 @@ pub const MAX_QUESTIONS: u64 = 200;
 pub const MAX_FORECASTS: u64 = 1_500;
 /// `forecaster key (32) || commitment (32) || revealed (1)`.
 pub const FORECAST_LEN: usize = 65;
+/// League card (v2): a name in any language (may be empty) and the key of one of the site's images.
+pub const MAX_NAME_CHARS: usize = 40;
+pub const MAX_IMAGE_LEN: usize = 16;
+/// Members (who may seal in a closed league) and blocked keys (who may never seal), and changes per call.
+pub const MAX_MEMBERS: usize = 500;
+pub const MAX_BLOCKED: usize = 500;
+pub const MAX_MEMBER_BATCH: usize = 50;
+/// The organizer's own picture for the league card, uploaded from their device (the client shrinks it
+/// to a small WebP first). Kept in the state, so every member sees it; never in an event (2 KiB cap).
+pub const MAX_PICTURE_BYTES: usize = 24_576;
+
+/// Empty (no picture), or a WebP, PNG or JPEG file of at most `MAX_PICTURE_BYTES`, by its signature.
+pub fn picture_is_valid(p: &[u8]) -> bool {
+    p.is_empty()
+        || (p.len() <= MAX_PICTURE_BYTES
+            && ((p.len() > 12 && &p[..4] == b"RIFF" && &p[8..12] == b"WEBP")
+                || p.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
+                || p.starts_with(&[0xFF, 0xD8, 0xFF])))
+}
 
 /// The commitment a forecaster seals for `question` of `board`. Every part is length-prefixed.
 pub fn commitment_of(board: &str, question: u64, forecaster: &[u8], answer: &str, nonce: &[u8]) -> Hash32 {
@@ -67,6 +91,16 @@ pub fn text_is_clean(text: &str) -> bool {
         })
 }
 
+/// A league name: empty, or clean text of at most `MAX_NAME_CHARS` characters.
+pub fn name_is_clean(name: &str) -> bool {
+    name.is_empty() || (name.chars().count() <= MAX_NAME_CHARS && text_is_clean(name))
+}
+
+/// An image key: 1 to `MAX_IMAGE_LEN` lowercase ASCII letters (the site maps it to one of its own images).
+pub fn image_is_valid(image: &str) -> bool {
+    !image.is_empty() && image.len() <= MAX_IMAGE_LEN && image.bytes().all(|b| b.is_ascii_lowercase())
+}
+
 fn text_hash(text: &str) -> Hash32 {
     Hash32::from_array(Blake2b256::digest(text.as_bytes()).into())
 }
@@ -81,22 +115,51 @@ mod signal_forecasts {
         opened_at_epoch: u64,
         questions: Vec<Question>,
         forecasts_count: u64,
+        // v2, appended so the fields above keep their positions for clients reading the state.
+        name: String,
+        image: String,
+        /// Open: anyone with the link may seal (except blocked keys). Closed: only members and the organizer.
+        open: bool,
+        members: Vec<RistrettoPublicKeyBytes>,
+        blocked: Vec<RistrettoPublicKeyBytes>,
+        /// The organizer's uploaded picture (empty: the site shows the image named by `image`).
+        picture: Bytes,
     }
 
     impl SignalForecasts {
-        pub fn open_board() -> Component<Self> {
+        pub fn open_board(name: String, image: String, open: bool) -> Component<Self> {
             let organizer = CallerContext::transaction_signer_public_key();
             let opened_at_epoch = Consensus::current_epoch();
+            assert!(name_is_clean(&name), "name must be at most {} characters with no hidden characters", MAX_NAME_CHARS);
+            assert!(image_is_valid(&image), "image must be 1 to {} lowercase letters", MAX_IMAGE_LEN);
             emit_event("board_opened", metadata! {
                 "organizer" => organizer.to_string(),
                 "epoch" => opened_at_epoch.to_string(),
+                "name" => name.clone(),
+                "image" => image.clone(),
+                "open" => open.to_string(),
             });
-            Component::new(Self { organizer, opened_at_epoch, questions: Vec::new(), forecasts_count: 0 })
+            Component::new(Self {
+                organizer,
+                opened_at_epoch,
+                questions: Vec::new(),
+                forecasts_count: 0,
+                name,
+                image,
+                open,
+                members: Vec::new(),
+                blocked: Vec::new(),
+                picture: Bytes::from_vec(Vec::new()),
+            })
                 .with_owner_rule(OwnerRule::None)
                 .with_access_rules(
                     ComponentAccessRules::new()
                         .method("ask", rule!(public_key(organizer)))
                         .method("resolve", rule!(public_key(organizer)))
+                        .method("set_profile", rule!(public_key(organizer)))
+                        .method("update_members", rule!(public_key(organizer)))
+                        .method("set_picture", rule!(public_key(organizer)))
+                        .method("can_seal", rule!(allow_all))
                         .method("seal", rule!(allow_all))
                         .method("reveal", rule!(allow_all))
                         .method("whoami", rule!(allow_all))
@@ -142,6 +205,8 @@ mod signal_forecasts {
             let now = Consensus::current_epoch();
             let key = CallerContext::transaction_signer_public_key();
             let board = CallerContext::current_component_address();
+            assert!(!self.blocked.contains(&key), "this key is blocked from this league");
+            assert!(self.open || key == self.organizer || self.members.contains(&key), "this league is closed: only its members can seal");
             assert!(self.forecasts_count < MAX_FORECASTS, "this board has reached {} forecasts", MAX_FORECASTS);
             let i = self.index(question);
             let q = &mut self.questions[i];
@@ -213,6 +278,76 @@ mod signal_forecasts {
             });
         }
 
+        /// Changes the league card and whether it is open. Organizer only.
+        pub fn set_profile(&mut self, name: String, image: String, open: bool) {
+            assert!(name_is_clean(&name), "name must be at most {} characters with no hidden characters", MAX_NAME_CHARS);
+            assert!(image_is_valid(&image), "image must be 1 to {} lowercase letters", MAX_IMAGE_LEN);
+            self.name = name.clone();
+            self.image = image.clone();
+            self.open = open;
+            emit_event("profile_updated", metadata! {
+                "board" => CallerContext::current_component_address().to_string(),
+                "name" => name,
+                "image" => image,
+                "open" => open.to_string(),
+            });
+        }
+
+        /// Sets (or, with empty bytes, removes) the league's own picture. Organizer only.
+        pub fn set_picture(&mut self, picture: Bytes) {
+            assert!(picture_is_valid(&picture), "picture must be a WebP, PNG or JPEG file of at most {} bytes", MAX_PICTURE_BYTES);
+            let hash = Hash32::from_array(Blake2b256::digest(&picture[..]).into());
+            emit_event("picture_updated", metadata! {
+                "board" => CallerContext::current_component_address().to_string(),
+                "size" => picture.len().to_string(),
+                "hash" => hash.to_string(),
+            });
+            self.picture = picture;
+        }
+
+        /// Applies member changes under one signature, in this order: remove, unblock, add (which also
+        /// unblocks), block (which also removes). Organizer only; the organizer cannot block themself.
+        pub fn update_members(
+            &mut self,
+            add: Vec<RistrettoPublicKeyBytes>,
+            remove: Vec<RistrettoPublicKeyBytes>,
+            block: Vec<RistrettoPublicKeyBytes>,
+            unblock: Vec<RistrettoPublicKeyBytes>,
+        ) {
+            assert!(add.len() + remove.len() + block.len() + unblock.len() <= MAX_MEMBER_BATCH, "at most {} changes per call", MAX_MEMBER_BATCH);
+            for k in &remove {
+                self.members.retain(|m| m != k);
+            }
+            for k in &unblock {
+                self.blocked.retain(|m| m != k);
+            }
+            for k in &add {
+                self.blocked.retain(|m| m != k);
+                if !self.members.contains(k) {
+                    assert!(self.members.len() < MAX_MEMBERS, "this league already has {} members", MAX_MEMBERS);
+                    self.members.push(*k);
+                }
+            }
+            for k in &block {
+                assert!(*k != self.organizer, "the organizer cannot block themself");
+                self.members.retain(|m| m != k);
+                if !self.blocked.contains(k) {
+                    assert!(self.blocked.len() < MAX_BLOCKED, "this league already blocks {} keys", MAX_BLOCKED);
+                    self.blocked.push(*k);
+                }
+            }
+            emit_event("members_updated", metadata! {
+                "board" => CallerContext::current_component_address().to_string(),
+                "members" => self.members.len().to_string(),
+                "blocked" => self.blocked.len().to_string(),
+            });
+        }
+
+        /// Whether `key` may seal on this board now (blocked keys never; closed leagues: members and organizer).
+        pub fn can_seal(&self, key: RistrettoPublicKeyBytes) -> bool {
+            !self.blocked.contains(&key) && (self.open || key == self.organizer || self.members.contains(&key))
+        }
+
         /// The transaction signer's key: what a client binds into its commitment (call it in a dry run).
         pub fn whoami(&self) -> RistrettoPublicKeyBytes {
             CallerContext::transaction_signer_public_key()
@@ -250,7 +385,25 @@ mod signal_forecasts {
 
 #[cfg(test)]
 mod tests {
-    use super::{answer_is_canonical, commitment_of, text_is_clean};
+    use super::{answer_is_canonical, commitment_of, image_is_valid, name_is_clean, picture_is_valid, text_is_clean, MAX_PICTURE_BYTES};
+
+    #[test]
+    fn pictures_are_small_webp_png_or_jpeg_files() {
+        let mut webp = b"RIFF\0\0\0\0WEBPVP8 ".to_vec();
+        assert!(picture_is_valid(&[]) && picture_is_valid(&webp));
+        assert!(picture_is_valid(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0]) && picture_is_valid(&[0xFF, 0xD8, 0xFF, 0xE0]));
+        assert!(!picture_is_valid(b"<svg onload=alert(1)>") && !picture_is_valid(b"GIF89a....") && !picture_is_valid(b"RIFF\0\0\0\0WAVE...."));
+        webp.resize(MAX_PICTURE_BYTES + 1, 0);
+        assert!(!picture_is_valid(&webp), "too large");
+    }
+
+    #[test]
+    fn league_names_hide_nothing_and_images_are_short_keys() {
+        assert!(name_is_clean("") && name_is_clean("Les Chads du BTC") && name_is_clean(&"é".repeat(40)));
+        assert!(!name_is_clean(&"a".repeat(41)) && !name_is_clean("BTC \u{202E}") && !name_is_clean("a\nb"));
+        assert!(image_is_valid("league") && image_is_valid("sport"));
+        assert!(!image_is_valid("") && !image_is_valid("Sport") && !image_is_valid("img/x.webp") && !image_is_valid(&"a".repeat(17)));
+    }
 
     #[test]
     fn every_bound_part_changes_the_commitment() {
