@@ -11,7 +11,9 @@
 //!    nonce)`. One forecast per key and question; nobody can read it, so nobody can copy it.
 //! 3. `reveal`: after the close and before the deadline, the forecast is opened and published in the
 //!    `forecast_revealed` event. The commitment binds the forecaster's key: a commitment copied under
-//!    another key never opens.
+//!    another key never opens. The forecaster may publish with the seal a time-locked copy of the
+//!    answer and nonce (`tlock`, drand quicknet, opaque here, in the `forecast_sealed` event): once its
+//!    round is out, anyone can decrypt it and reveal, so a forecast opens without its forecaster.
 //! 4. `resolve`: after the close, the organizer publishes the outcome (`question_resolved`).
 //!
 //! League v2: the organizer names the league and picks its image (`set_profile`), keeps it open or
@@ -33,6 +35,9 @@ type Blake2b256 = Blake2b<U32>;
 
 /// Longest question text, published in the event (2 KiB per event).
 pub const MAX_TEXT_LEN: usize = 512;
+/// Bound of the time-locked copy, published in the `forecast_sealed` event and never stored in the
+/// state: the binary age file of a 64-byte nonce and the longest answer stays under it.
+pub const MAX_TLOCK_LEN: usize = 640;
 /// Longest answer or outcome: a number, a price, a choice.
 pub const MAX_ANSWER_LEN: usize = 64;
 pub const MIN_NONCE_LEN: usize = 16;
@@ -101,6 +106,16 @@ pub fn image_is_valid(image: &str) -> bool {
     !image.is_empty() && image.len() <= MAX_IMAGE_LEN && image.bytes().all(|b| b.is_ascii_lowercase())
 }
 
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(DIGITS[(b >> 4) as usize] as char);
+        out.push(DIGITS[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
 fn text_hash(text: &str) -> Hash32 {
     Hash32::from_array(Blake2b256::digest(text.as_bytes()).into())
 }
@@ -132,14 +147,8 @@ mod signal_forecasts {
             let opened_at_epoch = Consensus::current_epoch();
             assert!(name_is_clean(&name), "name must be at most {} characters with no hidden characters", MAX_NAME_CHARS);
             assert!(image_is_valid(&image), "image must be 1 to {} lowercase letters", MAX_IMAGE_LEN);
-            emit_event("board_opened", metadata! {
-                "organizer" => organizer.to_string(),
-                "epoch" => opened_at_epoch.to_string(),
-                "name" => name.clone(),
-                "image" => image.clone(),
-                "open" => open.to_string(),
-            });
-            Component::new(Self {
+            let (event_name, event_image) = (name.clone(), image.clone());
+            let board = Component::new(Self {
                 organizer,
                 opened_at_epoch,
                 questions: Vec::new(),
@@ -168,7 +177,17 @@ mod signal_forecasts {
                         .method("forecast_count", rule!(allow_all))
                         .default(rule!(deny_all)),
                 )
-                .create()
+                .create();
+            // Emitted once the board exists, so the event names it: a client finds its leagues from here.
+            emit_event("board_opened", metadata! {
+                "board" => board.address().to_string(),
+                "organizer" => organizer.to_string(),
+                "epoch" => opened_at_epoch.to_string(),
+                "name" => event_name,
+                "image" => event_image,
+                "open" => open.to_string(),
+            });
+            board
         }
 
         /// Publishes question number `expected_id`. Organizer only.
@@ -201,7 +220,10 @@ mod signal_forecasts {
         }
 
         /// Seals the signer's forecast for `question`. Returns its index. One per key and question.
-        pub fn seal(&mut self, question: u64, commitment: Hash32) -> u64 {
+        /// `tlock` (may be empty) is the time-locked copy of the answer that lets anyone reveal it once its
+        /// drand round is out. The template cannot read it: it is published as is in `forecast_sealed`.
+        pub fn seal(&mut self, question: u64, commitment: Hash32, tlock: Bytes) -> u64 {
+            assert!(tlock.len() <= MAX_TLOCK_LEN, "tlock longer than {} bytes", MAX_TLOCK_LEN);
             let now = Consensus::current_epoch();
             let key = CallerContext::transaction_signer_public_key();
             let board = CallerContext::current_component_address();
@@ -229,6 +251,7 @@ mod signal_forecasts {
                 "index" => index.to_string(),
                 "forecaster" => key.to_string(),
                 "commitment" => commitment.to_string(),
+                "tlock" => hex(&tlock),
             });
             index
         }

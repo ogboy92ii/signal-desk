@@ -33,10 +33,7 @@ mod signal_follows {
     impl SignalFollows {
         pub fn open() -> Component<Self> {
             let owner = CallerContext::transaction_signer_public_key();
-            emit_event("follows_opened", metadata! {
-                "owner" => owner.to_string(),
-            });
-            Component::new(Self { owner, desks: Vec::new() })
+            let list = Component::new(Self { owner, desks: Vec::new() })
                 .with_owner_rule(OwnerRule::None)
                 .with_access_rules(
                     ComponentAccessRules::new()
@@ -48,7 +45,13 @@ mod signal_follows {
                         .method("owner", rule!(allow_all))
                         .default(rule!(deny_all)),
                 )
-                .create()
+                .create();
+            // Emitted once the list exists, so the event names it: its owner finds it from any device.
+            emit_event("follows_opened", metadata! {
+                "list" => list.address().to_string(),
+                "owner" => owner.to_string(),
+            });
+            list
         }
 
         /// Follows `desk`. Owner only.

@@ -133,3 +133,16 @@ fn a_full_list_refuses_more_and_still_works() {
     test.call_method::<()>(list, "follow", args![d[MAX_FOLLOWS]], vec![]);
     assert!(test.call_method::<bool>(list, "is_following", args![d[MAX_FOLLOWS]], vec![]));
 }
+
+#[test]
+fn the_follows_opened_event_names_the_list_and_its_owner() {
+    let mut test = TemplateTest::new_cwd(["."]);
+    let key = test.secret_key().clone();
+    let tpl = test.get_template_address("SignalFollows");
+    let tx = test.transaction().call_function(tpl, "open", args![]).build_and_seal(&key);
+    let result = test.execute_expect_success(tx, vec![]);
+    let event = result.finalize.events.iter().find(|e| e.topic().ends_with(".follows_opened")).expect("open emits follows_opened");
+    let list: ComponentAddress = event.payload().get_str("list").expect("the event names the list").parse().expect("a component address");
+    let owner = event.payload().get_str("owner").expect("owner").to_string();
+    assert_eq!(test.call_method::<tari_template_lib_types::crypto::RistrettoPublicKeyBytes>(list, "owner", args![], vec![]).to_string(), owner);
+}

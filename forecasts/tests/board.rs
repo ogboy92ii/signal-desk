@@ -76,7 +76,7 @@ fn signer(i: u64) -> Player {
 
 fn seal_tx(test: &mut TemplateTest, board: ComponentAddress, question: u64, p: &Player, answer: &str) -> Transaction {
     let c = commitment_of(&board.to_string(), question, p.public.as_bytes(), answer, NONCE);
-    test.transaction().call_method(board, "seal", args![question, c]).build_and_seal(&p.key)
+    test.transaction().call_method(board, "seal", args![question, c, Bytes::from_vec(Vec::new())]).build_and_seal(&p.key)
 }
 
 fn reveal_tx(test: &mut TemplateTest, board: ComponentAddress, question: u64, index: u64, answer: &str, signer: &RistrettoSecretKey) -> Transaction {
@@ -142,7 +142,7 @@ fn a_commitment_copied_under_another_key_never_opens() {
     test.execute_expect_success(tx, vec![alice.proof.clone()]);
     // The copier seals Alice's very commitment under their own key.
     let copied = commitment_of(&board.to_string(), q, alice.public.as_bytes(), "98500", NONCE);
-    let tx = test.transaction().call_method(board, "seal", args![q, copied]).build_and_seal(&copier.key);
+    let tx = test.transaction().call_method(board, "seal", args![q, copied, Bytes::from_vec(Vec::new())]).build_and_seal(&copier.key);
     test.execute_expect_success(tx, vec![copier.proof.clone()]);
     set_epoch(&mut test, 5);
     // Once Alice's answer is public, it still cannot open the copy: the key is bound in.
@@ -313,4 +313,41 @@ fn a_blocked_key_never_seals_and_the_organizer_cannot_block_themself() {
     let many: Keys = (0..51).map(|i| signer(10_000 + i).public).collect();
     let tx = members_tx(&mut test, board, many, vec![], vec![], vec![], &key);
     expect_reject(&mut test, tx, "changes per call");
+}
+
+#[test]
+fn a_time_locked_copy_is_bounded_and_published_with_the_seal() {
+    let (mut test, board) = new_board();
+    let q = ask(&mut test, board, 5);
+    let alice = player(&mut test);
+    let c = commitment_of(&board.to_string(), q, alice.public.as_bytes(), "98500", NONCE);
+    let long = test.transaction().call_method(board, "seal", args![q, c, Bytes::from_vec(vec![7u8; 641])]).build_and_seal(&alice.key);
+    expect_reject(&mut test, long, "tlock longer");
+    // The template publishes the copy as given, in hex: it cannot read it, and does not need to.
+    let copy = b"age-encryption.org/v1 opaque to the template".to_vec();
+    let tx = test.transaction().call_method(board, "seal", args![q, c, Bytes::from_vec(copy.clone())]).build_and_seal(&alice.key);
+    let result = test.execute_expect_success(tx, vec![alice.proof.clone()]);
+    let event = result.finalize.events.iter().find(|e| e.topic().ends_with(".forecast_sealed")).expect("forecast_sealed");
+    let expected: String = copy.iter().map(|b| format!("{:02x}", b)).collect();
+    assert_eq!(event.payload().get_str("tlock"), Some(expected.as_str()));
+    // Once the copy is opened, anyone reveals: here a funded stranger.
+    set_epoch(&mut test, 5);
+    let (_, _, relay) = test.create_funded_account();
+    let tx = reveal_tx(&mut test, board, q, 0, "98500", &relay);
+    test.execute_expect_success(tx, vec![]);
+}
+
+#[test]
+fn the_board_opened_event_names_the_board_and_its_organizer() {
+    let mut test = TemplateTest::new_cwd(["."]);
+    set_epoch(&mut test, 1);
+    let key = test.secret_key().clone();
+    let tpl = test.get_template_address("SignalForecasts");
+    let tx = test.transaction().call_function(tpl, "open_board", args!["Chads".to_string(), "league".to_string(), true]).build_and_seal(&key);
+    let result = test.execute_expect_success(tx, vec![]);
+    let event = result.finalize.events.iter().find(|e| e.topic().ends_with(".board_opened")).expect("open_board emits board_opened");
+    assert_eq!(event.payload().get_str("name"), Some("Chads"));
+    let board: ComponentAddress = event.payload().get_str("board").expect("the event names the board").parse().expect("a component address");
+    let organizer = event.payload().get_str("organizer").expect("organizer").to_string();
+    assert_eq!(test.call_method::<RistrettoPublicKeyBytes>(board, "organizer", args![], vec![]).to_string(), organizer);
 }
