@@ -122,6 +122,39 @@ pub fn payload_is_canonical(payload: &str) -> bool {
 
 pub const MAX_LABEL_LEN: usize = 64;
 
+/// The caller's public card: a name, a short bio and a picture, set by the publisher (`set_profile`,
+/// `set_picture`). Names are not unique on chain: clients show them with the desk's short address.
+pub const MIN_NAME_CHARS: usize = 2;
+pub const MAX_NAME_CHARS: usize = 24;
+pub const MAX_BIO_CHARS: usize = 160;
+/// Kept in the state (an event holds 2 KiB at most), small next to the calls: the client shrinks it first.
+pub const MAX_PICTURE_BYTES: usize = 24_576;
+
+/// A desk name: 2 to `MAX_NAME_CHARS` letters or digits in any script, `_`, `.` or `-`. Nothing that
+/// hides or reorders text.
+pub fn name_is_valid(name: &str) -> bool {
+    let n = name.chars().count();
+    (MIN_NAME_CHARS..=MAX_NAME_CHARS).contains(&n) && name.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
+/// A bio: empty, or at most `MAX_BIO_CHARS` characters in any language with no control, bidi or zero-width character.
+pub fn bio_is_clean(bio: &str) -> bool {
+    bio.chars().count() <= MAX_BIO_CHARS
+        && bio.chars().all(|c| {
+            !c.is_control()
+                && !matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}' | '\u{061C}' | '\u{00AD}')
+        })
+}
+
+/// Empty (no picture), or a WebP, PNG or JPEG file of at most `MAX_PICTURE_BYTES`, by its signature.
+pub fn picture_is_valid(p: &[u8]) -> bool {
+    p.is_empty()
+        || (p.len() <= MAX_PICTURE_BYTES
+            && ((p.len() > 12 && &p[..4] == b"RIFF" && &p[8..12] == b"WEBP")
+                || p.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A])
+                || p.starts_with(&[0xFF, 0xD8, 0xFF])))
+}
+
 /// A public label: what a call is about, shown before it opens. One or more `|`-separated
 /// non-empty fields of printable ASCII: `BTCUSDT`, `NFL|KC@BUF|2026-11-22T18:25Z`.
 pub fn label_is_valid(label: &str) -> bool {
@@ -337,6 +370,10 @@ mod signal_desk {
         earnings: Vault,
         /// Proceeds of settled sales not yet paid out. The rest of `earnings` backs refunds.
         withdrawable: Amount,
+        // Public card, appended so the fields above keep their positions for clients reading the state.
+        name: String,
+        bio: String,
+        picture: Bytes,
     }
 
     impl SignalDesk {
@@ -352,6 +389,9 @@ mod signal_desk {
                 sales_count: 0,
                 earnings: Vault::new_empty(TARI_TOKEN),
                 withdrawable: Amount::zero(),
+                name: String::new(),
+                bio: String::new(),
+                picture: Bytes::from_vec(Vec::new()),
             })
             // No owner: an owner passes every method rule and could replace the component's
             // template, rewriting sealed calls after the fact.
@@ -362,6 +402,10 @@ mod signal_desk {
                     // because no caller can hand the publisher's authority to them as an argument.
                     .method("seal", rule!(public_key(publisher)))
                     .method("deliver", rule!(public_key(publisher)))
+                    .method("set_profile", rule!(public_key(publisher)))
+                    .method("set_picture", rule!(public_key(publisher)))
+                    .method("name", rule!(allow_all))
+                    .method("bio", rule!(allow_all))
                     // Open to anyone: each one checks its own conditions, and money only ever moves
                     // to the payout account or out of a badge its holder burnt.
                     .method("buy", rule!(allow_all))
@@ -668,6 +712,38 @@ mod signal_desk {
         }
 
         // ---- desk ---------------------------------------------------------------------------
+
+        /// Sets the desk's public name and bio. Publisher only. The track record is not touched.
+        pub fn set_profile(&mut self, name: String, bio: String) {
+            assert!(name_is_valid(&name), "name must be {} to {} letters, digits, _ . or -", MIN_NAME_CHARS, MAX_NAME_CHARS);
+            assert!(bio_is_clean(&bio), "bio must be at most {} characters with no hidden characters", MAX_BIO_CHARS);
+            self.name = name.clone();
+            self.bio = bio.clone();
+            emit_event("profile_updated", metadata! {
+                "desk" => CallerContext::current_component_address().to_string(),
+                "name" => name,
+                "bio" => bio,
+            });
+        }
+
+        /// Sets the desk's picture (a WebP, PNG or JPEG of at most `MAX_PICTURE_BYTES`; empty removes it). Publisher only.
+        pub fn set_picture(&mut self, picture: Bytes) {
+            assert!(picture_is_valid(&picture), "picture must be a WebP, PNG or JPEG of at most {} bytes", MAX_PICTURE_BYTES);
+            let size = picture.len();
+            self.picture = picture;
+            emit_event("picture_updated", metadata! {
+                "desk" => CallerContext::current_component_address().to_string(),
+                "bytes" => size.to_string(),
+            });
+        }
+
+        pub fn name(&self) -> String {
+            self.name.clone()
+        }
+
+        pub fn bio(&self) -> String {
+            self.bio.clone()
+        }
 
         pub fn publisher(&self) -> RistrettoPublicKeyBytes {
             self.publisher

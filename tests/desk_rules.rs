@@ -289,3 +289,37 @@ fn the_desk_opened_event_names_the_desk_and_its_payout() {
     let desk: ComponentAddress = desk.parse().expect("a component address");
     assert_eq!(test.call_method::<ComponentAddress>(desk, "payout", args![], vec![]), payout);
 }
+
+#[test]
+fn only_the_publisher_names_the_desk_and_sets_its_picture() {
+    let (mut test, desk) = new_desk();
+    let key = test.secret_key().clone();
+    let (_, _, stranger) = test.create_funded_account();
+    let foreign = test.transaction().call_method(desk, "set_profile", args!["Pirate".to_string(), String::new()]).build_and_seal(&stranger);
+    test.execute_expect_failure(foreign, vec![]);
+    for bad in ["x", "BTC \u{202E}", "a name with spaces", "abcdefghijklmnopqrstuvwxy"] {
+        let tx = test.transaction().call_method(desk, "set_profile", args![bad.to_string(), String::new()]).build_and_seal(&key);
+        test.execute_expect_failure(tx, vec![]);
+    }
+    let hidden = test.transaction().call_method(desk, "set_profile", args!["OgBoy92".to_string(), "hi \u{200B}".to_string()]).build_and_seal(&key);
+    test.execute_expect_failure(hidden, vec![]);
+    let tx = test.transaction().call_method(desk, "set_profile", args!["OgBoy92".to_string(), "Swing 4H, BTC et ETH. Évite le bruit.".to_string()]).build_and_seal(&key);
+    let result = test.execute_expect_success(tx, vec![]);
+    let event = result.finalize.events.iter().find(|e| e.topic().ends_with(".profile_updated")).expect("profile_updated");
+    assert_eq!(event.payload().get_str("name"), Some("OgBoy92"));
+    assert_eq!(test.call_method::<String>(desk, "name", args![], vec![]), "OgBoy92");
+    assert_eq!(test.call_method::<String>(desk, "bio", args![], vec![]), "Swing 4H, BTC et ETH. Évite le bruit.");
+
+    let mut webp = b"RIFF\0\0\0\0WEBPVP8 ".to_vec();
+    webp.resize(2_000, 0);
+    let foreign = test.transaction().call_method(desk, "set_picture", args![Bytes::from_vec(webp.clone())]).build_and_seal(&stranger);
+    test.execute_expect_failure(foreign, vec![]);
+    let svg = test.transaction().call_method(desk, "set_picture", args![Bytes::from_vec(b"<svg onload=alert(1)></svg>".to_vec())]).build_and_seal(&key);
+    test.execute_expect_failure(svg, vec![]);
+    let mut huge = webp.clone();
+    huge.resize(24_577, 0);
+    let big = test.transaction().call_method(desk, "set_picture", args![Bytes::from_vec(huge)]).build_and_seal(&key);
+    test.execute_expect_failure(big, vec![]);
+    let tx = test.transaction().call_method(desk, "set_picture", args![Bytes::from_vec(webp)]).build_and_seal(&key);
+    test.execute_expect_success(tx, vec![]);
+}
