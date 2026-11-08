@@ -25,6 +25,7 @@ pub const REVEAL_WINDOW_EPOCHS: u64 = 10;
 pub const MAX_CALLS: u64 = 500;
 pub const MAX_SALES: u64 = 1_000;
 pub const BLOCK_LEN: usize = 640;
+pub const MAX_TLOCK_LEN: usize = 640;
 pub const NONCE: &[u8] = b"demo-nonce-0123456789abcdefghijk";
 
 /// `commitment_of` from the template, computed off-chain as a caller must. The crate is a `cdylib`
@@ -185,7 +186,7 @@ pub fn seal(test: &mut TemplateTest, desk: ComponentAddress, payload: &str, reve
     let seq: u64 = test.call_method(desk, "call_count", args![], vec![]);
     let commitment = digest(test, desk, seq, payload);
     let label = payload.split('|').nth(1).expect("v1|LABEL|... payload").to_string();
-    test.call_method(desk, "seal", args![seq, commitment, reveal_at, Amount::from_u64(PRICE), label], vec![])
+    test.call_method(desk, "seal", args![seq, commitment, reveal_at, Amount::from_u64(PRICE), label, Bytes::from_vec(Vec::new())], vec![])
 }
 
 /// Opens call `seq` and returns the `payload` published in its `call_revealed` event.

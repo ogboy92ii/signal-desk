@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use tari_template_lib_types::{Amount, ComponentAddress};
+use tari_template_lib_types::{bytes::Bytes, Amount, ComponentAddress};
 use tari_template_test_tooling::{transaction::args, TemplateTest};
 
 const A: &str = "v1|ETHUSDT|LONG|3100|3400|2950|2026-11-20T00:00Z";
@@ -28,7 +28,7 @@ fn a_component_the_publisher_signs_for_cannot_seal_in_their_name() {
     // Signed by the publisher's own key, but the call to `seal` comes from the proxy.
     let lured = test
         .transaction()
-        .call_method(proxy, "seal_via", args![desk, 0u64, commitment, 5u64, Amount::from_u64(PRICE), "ETHUSDT".to_string()])
+        .call_method(proxy, "seal_via", args![desk, 0u64, commitment, 5u64, Amount::from_u64(PRICE), "ETHUSDT".to_string(), Bytes::from_vec(Vec::new())])
         .build_and_seal(&key);
     test.execute_expect_failure(lured, vec![]);
     assert_eq!(test.call_method::<u64>(desk, "call_count", args![], vec![]), 0, "nothing was sealed");

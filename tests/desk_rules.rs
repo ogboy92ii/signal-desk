@@ -89,13 +89,13 @@ fn a_commitment_only_opens_under_its_own_number_and_desk() {
 
     // Sealed as call #0 with the commitment computed for #1: no payload can ever open it.
     let wrong_slot = digest(&test, desk, 1, A);
-    test.call_method::<u64>(desk, "seal", args![0u64, wrong_slot, 5u64, Amount::from_u64(PRICE), eth()], vec![]);
+    test.call_method::<u64>(desk, "seal", args![0u64, wrong_slot, 5u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(Vec::new())], vec![]);
 
     // Copied from another desk of the same publisher: it does not open here either.
     let (payout, _, _) = test.create_empty_account();
     let other: ComponentAddress = test.call_function("SignalDesk", "open_desk", args![payout], vec![]);
     let copied = digest(&test, other, 1, B);
-    test.call_method::<u64>(desk, "seal", args![1u64, copied, 5u64, Amount::from_u64(PRICE), "SOLUSDT".to_string()], vec![]);
+    test.call_method::<u64>(desk, "seal", args![1u64, copied, 5u64, Amount::from_u64(PRICE), "SOLUSDT".to_string(), Bytes::from_vec(Vec::new())], vec![]);
 
     set_epoch(&mut test, 5);
     for (seq, payload) in [(0u64, A), (1u64, B)] {
@@ -114,8 +114,8 @@ fn a_seal_racing_another_is_refused_instead_of_misnumbered() {
     // Two seals both prepared for #0; the first lands, the second must not slip in as #1.
     let a = digest(&test, desk, 0, A);
     let b = digest(&test, desk, 0, B);
-    test.call_method::<u64>(desk, "seal", args![0u64, a, 5u64, Amount::from_u64(PRICE), eth()], vec![]);
-    let racing = test.transaction().call_method(desk, "seal", args![0u64, b, 5u64, Amount::from_u64(PRICE), eth()]).build_and_seal(&key);
+    test.call_method::<u64>(desk, "seal", args![0u64, a, 5u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(Vec::new())], vec![]);
+    let racing = test.transaction().call_method(desk, "seal", args![0u64, b, 5u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(Vec::new())]).build_and_seal(&key);
     expect_reject(&mut test, racing, vec![], "next call number is 1");
     assert_eq!(test.call_method::<u64>(desk, "call_count", args![], vec![]), 1);
 }
@@ -127,7 +127,7 @@ fn only_the_publisher_seals_and_proceeds_only_reach_the_payout_account() {
     let commitment = digest(&test, desk, 0, A);
     let seal_tx = test
         .transaction()
-        .call_method(desk, "seal", args![0u64, commitment, 5u64, Amount::from_u64(PRICE), eth()])
+        .call_method(desk, "seal", args![0u64, commitment, 5u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(Vec::new())])
         .build_and_seal(&other_key);
     test.execute_expect_failure(seal_tx, vec![]);
     assert_eq!(test.call_method::<u64>(desk, "call_count", args![], vec![]), 0);
@@ -160,20 +160,20 @@ fn bad_terms_payloads_and_unknown_calls_are_refused() {
     let (mut test, desk) = new_desk();
     let key = test.secret_key().clone();
     let c = digest(&test, desk, 0, A);
-    let past = test.transaction().call_method(desk, "seal", args![0u64, c, 1u64, Amount::from_u64(PRICE), eth()]).build_and_seal(&key);
+    let past = test.transaction().call_method(desk, "seal", args![0u64, c, 1u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(Vec::new())]).build_and_seal(&key);
     expect_reject(&mut test, past, vec![], "must be in the future");
-    let far = test.transaction().call_method(desk, "seal", args![0u64, c, 20_000u64, Amount::from_u64(PRICE), eth()]).build_and_seal(&key);
+    let far = test.transaction().call_method(desk, "seal", args![0u64, c, 20_000u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(Vec::new())]).build_and_seal(&key);
     expect_reject(&mut test, far, vec![], "epochs away");
-    let free = test.transaction().call_method(desk, "seal", args![0u64, c, 5u64, Amount::zero(), eth()]).build_and_seal(&key);
+    let free = test.transaction().call_method(desk, "seal", args![0u64, c, 5u64, Amount::zero(), eth(), Bytes::from_vec(Vec::new())]).build_and_seal(&key);
     expect_reject(&mut test, free, vec![], "price must be positive");
-    let unlabelled = test.transaction().call_method(desk, "seal", args![0u64, c, 5u64, Amount::from_u64(PRICE), "NFL||".to_string()]).build_and_seal(&key);
+    let unlabelled = test.transaction().call_method(desk, "seal", args![0u64, c, 5u64, Amount::from_u64(PRICE), "NFL||".to_string(), Bytes::from_vec(Vec::new())]).build_and_seal(&key);
     expect_reject(&mut test, unlabelled, vec![], "label must be");
 
     // A payload that would read differently from how it hashes is refused even if it matches.
     let tricky = "v1|BTCUSDT|LONG\u{202E}TROHS|62000";
     let seq: u64 = test.call_method(desk, "call_count", args![], vec![]);
     let t = commitment_of(&desk.to_string(), test.to_public_key_bytes().as_bytes(), seq, tricky, NONCE);
-    test.call_method::<u64>(desk, "seal", args![seq, t, 5u64, Amount::from_u64(PRICE), "BTCUSDT".to_string()], vec![]);
+    test.call_method::<u64>(desk, "seal", args![seq, t, 5u64, Amount::from_u64(PRICE), "BTCUSDT".to_string(), Bytes::from_vec(Vec::new())], vec![]);
     set_epoch(&mut test, 5);
     let bidi = test
         .transaction()
@@ -196,16 +196,22 @@ fn bad_terms_payloads_and_unknown_calls_are_refused() {
 #[test]
 fn a_full_desk_refuses_more_calls_and_still_works() {
     let (mut test, desk) = new_desk();
-    for _ in 0..MAX_CALLS {
-        seal(&mut test, desk, A, 5);
+    let key = test.secret_key().clone();
+    // Worst case for the state: every call keeps a time-locked copy of the largest size.
+    for seq in 0..MAX_CALLS {
+        let c = digest(&test, desk, seq, A);
+        let tx = test
+            .transaction()
+            .call_method(desk, "seal", args![seq, c, 5u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(vec![7u8; MAX_TLOCK_LEN])])
+            .build_and_seal(&key);
+        test.execute_expect_success(tx, vec![]);
     }
     assert_eq!(test.call_method::<u64>(desk, "call_count", args![], vec![]), MAX_CALLS);
 
-    let key = test.secret_key().clone();
     let c = digest(&test, desk, MAX_CALLS, A);
     let over = test
         .transaction()
-        .call_method(desk, "seal", args![MAX_CALLS, c, 5u64, Amount::from_u64(PRICE), eth()])
+        .call_method(desk, "seal", args![MAX_CALLS, c, 5u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(Vec::new())])
         .build_and_seal(&key);
     expect_reject(&mut test, over, vec![], "has reached");
 
@@ -227,7 +233,7 @@ fn a_call_only_opens_on_its_public_label() {
     let key = test.secret_key().clone();
     // Committed to an SOL call but labelled ETH: the commitment opens, the label does not match.
     let c = digest(&test, desk, 0, B);
-    test.call_method::<u64>(desk, "seal", args![0u64, c, 5u64, Amount::from_u64(PRICE), eth()], vec![]);
+    test.call_method::<u64>(desk, "seal", args![0u64, c, 5u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(Vec::new())], vec![]);
     assert_eq!(test.call_method::<String>(desk, "label", args![0u64], vec![]), "ETHUSDT");
     set_epoch(&mut test, 5);
     let tx = test
@@ -235,4 +241,32 @@ fn a_call_only_opens_on_its_public_label() {
         .call_method(desk, "reveal", args![0u64, B.to_string(), Bytes::from_vec(NONCE.to_vec())])
         .build_and_seal(&key);
     expect_reject(&mut test, tx, vec![], "not about the public label");
+}
+
+#[test]
+fn a_time_locked_copy_is_bounded_kept_until_the_reveal_and_opens_without_the_caller() {
+    let (mut test, desk) = new_desk();
+    let key = test.secret_key().clone();
+    let c = digest(&test, desk, 0, A);
+    let big = test
+        .transaction()
+        .call_method(desk, "seal", args![0u64, c, 5u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(vec![1u8; MAX_TLOCK_LEN + 1])])
+        .build_and_seal(&key);
+    expect_reject(&mut test, big, vec![], "tlock longer than");
+
+    // The template keeps the copy as given: it cannot read it, and does not need to.
+    let copy = b"age-encryption.org/v1 opaque to the template".to_vec();
+    test.call_method::<u64>(desk, "seal", args![0u64, c, 5u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(copy.clone())], vec![]);
+    assert_eq!(&test.call_method::<Bytes>(desk, "tlock", args![0u64], vec![])[..], &copy[..]);
+
+    // Once the round is out, anyone who decrypted the copy opens the call: here a stranger's key.
+    let (_, _, stranger) = test.create_funded_account();
+    set_epoch(&mut test, 5);
+    let tx = test
+        .transaction()
+        .call_method(desk, "reveal", args![0u64, A.to_string(), Bytes::from_vec(NONCE.to_vec())])
+        .build_and_seal(&stranger);
+    test.execute_expect_success(tx, vec![]);
+    assert_eq!(test.call_method::<Option<u64>>(desk, "revealed_at_epoch", args![0u64], vec![]), Some(5));
+    assert!(test.call_method::<Bytes>(desk, "tlock", args![0u64], vec![]).is_empty(), "dropped at the reveal");
 }
