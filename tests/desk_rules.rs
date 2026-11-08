@@ -6,7 +6,7 @@ mod common;
 
 use common::*;
 use tari_template_lib_types::{bytes::Bytes, Amount, ComponentAddress, ResourceAddress};
-use tari_template_test_tooling::transaction::args;
+use tari_template_test_tooling::{transaction::args, TemplateTest};
 
 const A: &str = "v1|ETHUSDT|LONG|3100|3400|2950|2026-11-20T00:00Z";
 const B: &str = "v1|SOLUSDT|SHORT|180|160|190|2026-11-20T00:00Z";
@@ -269,4 +269,18 @@ fn a_time_locked_copy_is_bounded_kept_until_the_reveal_and_opens_without_the_cal
     test.execute_expect_success(tx, vec![]);
     assert_eq!(test.call_method::<Option<u64>>(desk, "revealed_at_epoch", args![0u64], vec![]), Some(5));
     assert!(test.call_method::<Bytes>(desk, "tlock", args![0u64], vec![]).is_empty(), "dropped at the reveal");
+}
+
+#[test]
+fn the_desk_opened_event_names_the_desk_and_its_payout() {
+    let mut test = TemplateTest::new_cwd(["."]);
+    let (payout, _, _) = test.create_empty_account();
+    let key = test.secret_key().clone();
+    let tx = test.transaction().call_function(test.get_template_address("SignalDesk"), "open_desk", args![payout]).build_and_seal(&key);
+    let result = test.execute_expect_success(tx, vec![]);
+    let event = result.finalize.events.iter().find(|e| e.topic().ends_with(".desk_opened")).expect("open_desk emits desk_opened");
+    let desk = event.payload().get_str("desk").expect("the event names the desk").to_string();
+    assert_eq!(event.payload().get_str("payout"), Some(payout.to_string().as_str()));
+    let desk: ComponentAddress = desk.parse().expect("a component address");
+    assert_eq!(test.call_method::<ComponentAddress>(desk, "payout", args![], vec![]), payout);
 }

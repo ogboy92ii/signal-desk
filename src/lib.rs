@@ -342,12 +342,7 @@ mod signal_desk {
         pub fn open_desk(payout: ComponentAddress) -> Component<Self> {
             let publisher = CallerContext::transaction_signer_public_key();
             let opened_at_epoch = Consensus::current_epoch();
-            emit_event("desk_opened", metadata! {
-                "publisher" => publisher.to_string(),
-                "payout" => payout.to_string(),
-                "epoch" => opened_at_epoch.to_string(),
-            });
-            Component::new(Self {
+            let desk = Component::new(Self {
                 publisher,
                 payout,
                 opened_at_epoch,
@@ -393,7 +388,16 @@ mod signal_desk {
                     .method("tlock", rule!(allow_all))
                     .default(rule!(deny_all)),
             )
-            .create()
+            .create();
+            // Emitted once the desk exists, with its address: a client finds a caller's desk from this
+            // event alone, on any device, without the transaction that opened it.
+            emit_event("desk_opened", metadata! {
+                "desk" => desk.address().to_string(),
+                "publisher" => publisher.to_string(),
+                "payout" => payout.to_string(),
+                "epoch" => opened_at_epoch.to_string(),
+            });
+            desk
         }
 
         /// Seals a call as number `expected_seq` and returns it. Publisher only.
