@@ -21,11 +21,11 @@
 //!    * mismatch or unreadable block: **fraud**. The sale becomes refundable and the call carries the
 //!      verdict for good in [`SignalDesk::stats`].
 //! 4. `reveal`: from the reveal epoch, anyone holding the payload and nonce opens the call; the
-//!    template checks it and publishes it in the `call_revealed` event. The caller may store with the
-//!    seal a time-locked copy of `payload` and `nonce` (`tlock`, drand quicknet, opaque here): once its
-//!    round is published, any client can decrypt it and reveal, so a call opens without its caller. A
-//!    copy that does not open the commitment changes nothing: the reveal is refused and the call
-//!    refunds like any call never opened.
+//!    template checks it and publishes it in the `call_revealed` event. The caller may publish with
+//!    the seal a time-locked copy of `payload` and `nonce` (`tlock`, drand quicknet, opaque here, in the
+//!    `call_sealed` event): once its round is out, any client can decrypt it and reveal, so a call opens
+//!    without its caller. A copy that does not open the commitment changes nothing: the reveal is
+//!    refused and the call refunds like any call never opened.
 //! 5. `settle`: once the reveal window of an opened call is over, the price of every delivered sale
 //!    that was not a fraud becomes payable to the caller. A sale never delivered is never paid.
 //! 6. `refund`: a badge refunds its sale if it was never delivered before the reveal epoch, if it won
@@ -78,8 +78,10 @@ pub const MIN_NONCE_LEN: usize = 16;
 pub const MAX_NONCE_LEN: usize = 64;
 /// Published in the reveal event (2 KiB per event), never stored in the component state.
 pub const MAX_PAYLOAD_LEN: usize = 1024;
-/// Bound of the time-locked copy kept in the state until the reveal: the binary age file of a call
-/// with its nonce is 473 bytes for a `v1|…` call, 567 for the longest call the site seals.
+/// Bound of the time-locked copy, published in the `call_sealed` event and never stored in the state
+/// (500 copies in the state ran the engine out of WASM memory in CI): the binary age file of a call with
+/// its nonce is 473 bytes for a `v1|…` call, 567 for the longest call the site seals. 1 280 hex
+/// characters at most, under the 2 KiB event limit with the other fields.
 pub const MAX_TLOCK_LEN: usize = 640;
 /// Size of every delivered block: `len (u16 LE) || payload || len (u8) || nonce || zeros`. Ten SHA-512
 /// blocks of keystream; 1 280 hex characters, under the 2 KiB event limit. A call is deliverable only
@@ -385,7 +387,6 @@ mod signal_desk {
                     .method("revealed_at_epoch", rule!(allow_all))
                     .method("badge_resource", rule!(allow_all))
                     .method("sale_status", rule!(allow_all))
-                    .method("tlock", rule!(allow_all))
                     .default(rule!(deny_all)),
             )
             .create();
@@ -410,7 +411,7 @@ mod signal_desk {
         /// opens a payload about that same label, so the label cannot lie.
         ///
         /// `tlock` (may be empty) is the time-locked copy of the call that lets anyone reveal it once its
-        /// drand round is out. The template cannot read it: it is kept as is and dropped at the reveal.
+        /// drand round is out. The template cannot read it: it is published as is in `call_sealed`.
         pub fn seal(&mut self, expected_seq: u64, commitment: Hash32, reveal_at_epoch: u64, price: Amount, label: String, tlock: Bytes) -> u64 {
             let now = Consensus::current_epoch();
             let seq = self.calls.len() as u64;
@@ -446,6 +447,7 @@ mod signal_desk {
                 "reveal_at_epoch" => reveal_at_epoch.to_string(),
                 "price" => price.to_string(),
                 "label" => label.clone(),
+                "tlock" => hex(&tlock),
             });
 
             self.calls.push(Call {
@@ -460,7 +462,6 @@ mod signal_desk {
                 frauds: 0,
                 settled: false,
                 revealed_at_epoch: None,
-                tlock,
             });
             seq
         }
@@ -600,8 +601,6 @@ mod signal_desk {
             assert!(payload_has_label(&payload, &call.label), "payload is not about the public label {}", call.label);
 
             call.revealed_at_epoch = Some(now);
-            // The payload is public from here on: the time-locked copy only costs state.
-            call.tlock = Bytes::from_vec(Vec::new());
             emit_event("call_revealed", metadata! {
                 "desk" => desk,
                 "seq" => seq.to_string(),
@@ -752,11 +751,6 @@ mod signal_desk {
             status_name(status_at(&self.calls[self.index(seq)].sales, sale)).to_string()
         }
 
-        /// Time-locked copy of call `seq` (empty once revealed, or if none was sealed).
-        pub fn tlock(&self, seq: u64) -> Bytes {
-            self.calls[self.index(seq)].tlock.clone()
-        }
-
         fn index(&self, seq: u64) -> usize {
             assert!(seq < self.calls.len() as u64, "no call #{} in this desk", seq);
             seq as usize
@@ -781,8 +775,6 @@ mod signal_desk {
         pub frauds: u64,
         pub settled: bool,
         pub revealed_at_epoch: Option<u64>,
-        /// Time-locked copy of payload and nonce (see `seal`), emptied at the reveal.
-        pub tlock: Bytes,
     }
 }
 

@@ -197,7 +197,7 @@ fn bad_terms_payloads_and_unknown_calls_are_refused() {
 fn a_full_desk_refuses_more_calls_and_still_works() {
     let (mut test, desk) = new_desk();
     let key = test.secret_key().clone();
-    // Worst case for the state: every call keeps a time-locked copy of the largest size.
+    // Every call sealed with a time-locked copy of the largest size: it goes to the event, not the state.
     for seq in 0..MAX_CALLS {
         let c = digest(&test, desk, seq, A);
         let tx = test
@@ -244,7 +244,7 @@ fn a_call_only_opens_on_its_public_label() {
 }
 
 #[test]
-fn a_time_locked_copy_is_bounded_kept_until_the_reveal_and_opens_without_the_caller() {
+fn a_time_locked_copy_is_bounded_published_with_the_seal_and_opens_without_the_caller() {
     let (mut test, desk) = new_desk();
     let key = test.secret_key().clone();
     let c = digest(&test, desk, 0, A);
@@ -254,10 +254,16 @@ fn a_time_locked_copy_is_bounded_kept_until_the_reveal_and_opens_without_the_cal
         .build_and_seal(&key);
     expect_reject(&mut test, big, vec![], "tlock longer than");
 
-    // The template keeps the copy as given: it cannot read it, and does not need to.
+    // The template publishes the copy as given, in hex: it cannot read it, and does not need to.
     let copy = b"age-encryption.org/v1 opaque to the template".to_vec();
-    test.call_method::<u64>(desk, "seal", args![0u64, c, 5u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(copy.clone())], vec![]);
-    assert_eq!(&test.call_method::<Bytes>(desk, "tlock", args![0u64], vec![])[..], &copy[..]);
+    let tx = test
+        .transaction()
+        .call_method(desk, "seal", args![0u64, c, 5u64, Amount::from_u64(PRICE), eth(), Bytes::from_vec(copy.clone())])
+        .build_and_seal(&key);
+    let result = test.execute_expect_success(tx, vec![]);
+    let event = result.finalize.events.iter().find(|e| e.topic().ends_with(".call_sealed")).expect("seal emits call_sealed");
+    let expected: String = copy.iter().map(|b| format!("{:02x}", b)).collect();
+    assert_eq!(event.payload().get_str("tlock"), Some(expected.as_str()));
 
     // Once the round is out, anyone who decrypted the copy opens the call: here a stranger's key.
     let (_, _, stranger) = test.create_funded_account();
@@ -268,7 +274,6 @@ fn a_time_locked_copy_is_bounded_kept_until_the_reveal_and_opens_without_the_cal
         .build_and_seal(&stranger);
     test.execute_expect_success(tx, vec![]);
     assert_eq!(test.call_method::<Option<u64>>(desk, "revealed_at_epoch", args![0u64], vec![]), Some(5));
-    assert!(test.call_method::<Bytes>(desk, "tlock", args![0u64], vec![]).is_empty(), "dropped at the reveal");
 }
 
 #[test]
