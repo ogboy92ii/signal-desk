@@ -1,0 +1,14 @@
+[
+ { "slug": "taipei-maire-2026", "type": "choice", "opts": ["KMT", "DPP", "Other / Autre"],
+   "q": "Élections locales à Taïwan (28/11/2026) : quel parti remporte la mairie de Taipei ? / Taiwan local elections (Nov 28, 2026): which party wins the Taipei mayoralty?",
+   "close_utc": "2026-11-27T22:00:00Z", "source": "CEC Taiwan" },
+ { "slug": "taiwan-22-sieges-2026", "type": "choice", "opts": ["KMT", "DPP", "Tie / Ex aequo", "Other / Autre"],
+   "q": "Élections locales à Taïwan (28/11/2026) : quel parti gagne le plus des 22 postes de maire et de chef de comté ? / Taiwan local elections (Nov 28, 2026): which party wins the most of the 22 mayor and magistrate seats?",
+   "close_utc": "2026-11-27T22:00:00Z", "source": "CEC Taiwan" },
+ { "slug": "fed-hausse-2026-12-09", "type": "yesno",
+   "q": "La Réserve fédérale américaine relève-t-elle son taux directeur le 9 décembre 2026 ? / Does the US Federal Reserve raise its policy rate on December 9, 2026?",
+   "close_utc": "2026-12-09T12:00:00Z", "source": "federalreserve.gov" },
+ { "slug": "france-presidentielle-2027-t1-rn", "type": "yesno",
+   "q": "Présidentielle française 2027 : le candidat du Rassemblement national arrive-t-il en tête du 1er tour (18/04/2027) ? / French presidential election 2027: does the National Rally candidate finish first in round 1 (Apr 18, 2027)?",
+   "close_utc": "2027-04-16T22:00:00Z", "source": "Conseil constitutionnel" }
+]

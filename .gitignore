@@ -1,2 +1,8 @@
 target
 __pycache__/
+robot/local.json
+robot/*.secret*.json
+robot/*.log
+robot/*.state.json
+robot/*.jsonl
+robot/*.err

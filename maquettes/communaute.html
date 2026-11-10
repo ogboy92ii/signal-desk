@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'sha256-CmdlgsRAk9ZIeXy65Hqw0vq1o7eJWZnbPTvyjBgsPRo=' 'sha256-VGeH5HAJneHBWGuWs5GZpEL6S/sEfiDZA3yNU5TOROw=' 'sha256-Z1C5ouXSW/xIFFCQ/Ce08UGZgDyLHQdU0mMiCqDitKk=' 'sha256-hmLMXF0mzgQe79FsQS2iwpTNNm4qZjlmoH56f0XkRug=' 'sha256-ljbKVWuydu99300/HPm/yqfOVfq8Sm45KI6fU9LWLjg='; style-src 'self'; img-src 'self' data: blob: https://cdn.bsky.app; font-src 'self'; connect-src 'self' https:; worker-src 'self' blob:; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Communauté — Signal Desk</title>
+<meta name="description" content="Tous les callers de Signal Desk, rangés en collections : swing BTC / ETH, altcoins, nouveaux talents… Suivez-les en un clic.">
+<meta name="theme-color" content="#05070b">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2305070b'/%3E%3Cpath d='M14 36H50L32 54Z' fill='%23dfe7f6'/%3E%3Cpath d='M16 29H48L32 11Z' fill='none' stroke='%23dfe7f6' stroke-width='4'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="site.css">
+</head>
+<body class="page-rk page-cm">
+<a class="skip" href="#contenu">Aller au contenu</a>
+<svg width="0" height="0" class="sprite"><defs>
+  <symbol id="mark" viewBox="0 0 64 64"><path d="M8 38H56L32 60Z" fill="currentColor"/><path d="M10.5 29H53.5L32 6Z" fill="none" stroke="currentColor" stroke-width="4.5" stroke-linejoin="miter"/></symbol>
+</defs></svg>
+
+<nav class="sdnav" aria-label="Navigation principale">
+  <div class="cmd-row">
+  <a class="brand" href="site-signal-desk.html"><span class="mk"><svg><use href="#mark"/></svg></span><span class="bt">Signal Desk</span></a>
+  <div class="cmd-search" role="search"><label class="cmd-q"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="sr">Rechercher</span><input id="cmd-q" type="search" placeholder="Rechercher un caller, une paire, une ligue…" autocomplete="off" spellcheck="false" aria-controls="cmd-res" aria-expanded="false" aria-autocomplete="list"><kbd>Ctrl K</kbd></label><div class="cmd-res" id="cmd-res" role="listbox" aria-label="Résultats" hidden></div></div>
+  <div class="cmd-acts">
+    <div class="cmd-create"><button type="button" class="cmd-cbtn" id="cmd-cbtn" aria-haspopup="menu" aria-expanded="false" aria-controls="cmd-menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Créer</span></button>
+      <div class="cmd-menu" id="cmd-menu" role="menu" hidden><a role="menuitem" href="#sceller"><i aria-hidden="true">◆</i><b>Sceller un call</b><small>Votre analyse, scellée avant le marché</small></a><a role="menuitem" href="pronostics.html"><i aria-hidden="true">◎</i><b>Faire un pronostic</b><small>Gratuit, ouvert à l'échéance</small></a><a role="menuitem" href="ligues.html"><i aria-hidden="true">♛</i><b>Créer une ligue</b><small>Entre amis, classement on-chain</small></a></div></div>
+    <div class="cmd-notif"><button type="button" class="cmd-bell" id="cmd-bell" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmd-panel" aria-label="Notifications"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><b id="cmd-cnt" hidden></b></button>
+      <div class="cmd-panel" id="cmd-panel" role="dialog" aria-label="Notifications" hidden><div class="cmd-ph"><b>Notifications</b><a href="en-direct.html?f=follow">Tout voir</a></div><ol class="cmd-feed" id="cmd-feed"></ol></div></div>
+    <div class="walletdock"><button type="button" class="btn-main sm wallet-btn" id="walletbtn" aria-haspopup="dialog" aria-label="Connecter le wallet"><span class="t"><svg class="wi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 10h18"/><circle cx="16.5" cy="14.5" r="1.2" fill="currentColor"/></svg><span class="w-off">Connecter le wallet</span><span class="w-ing">Connexion…</span><span class="w-on"><span class="av" id="acct-av" aria-hidden="true"></span><span class="w-name" id="acct"></span><span class="w-net" id="acct-net"></span></span></span></button>
+  <div class="nowallet" id="nowallet" role="dialog" aria-label="Aucun wallet Tari détecté sur cette page." hidden><b id="nw-title">Aucun wallet Tari détecté sur cette page.</b><p id="nw-why">Installez l'extension Sapient, puis rechargez la page.</p><p id="nw-hint">Sapient fonctionne sur Chrome, Brave, Edge et Opera.</p><a class="btn-link" href="https://github.com/chironbuilds/tari-wallet" target="_blank" rel="noopener noreferrer"><span class="t">Installer Sapient</span></a></div></div>
+<div class="langdock" id="langdock">
+  <button type="button" class="langbtn" id="langbtn" aria-haspopup="listbox" aria-expanded="false" aria-label="Langue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 2.6 15.4 0 18M12 3c-2.6 2.6-2.6 15.4 0 18"/></svg><span id="langcur">FR</span></button>
+  <ul class="langlist" id="langlist" role="listbox" aria-label="Langue" hidden></ul>
+</div>
+  </div>
+  </div>
+  <div class="cmd-cats"><a href="site-signal-desk.html">Accueil</a><a href="en-direct.html"><span class="cmd-live" aria-hidden="true"></span>En direct<span class="cnt" data-cnt="live"></span></a><a href="classement.html">Classement</a><a href="pronostics.html">Pronostics<span class="cnt" data-cnt="prono"></span></a><a href="ligues.html">Ligues</a><a href="communaute.html" class="on" aria-current="page">Communauté</a><span class="cmd-help" role="group" aria-label="Aide"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg><a href="site-signal-desk.html#comment">Comment ça marche</a><a href="site-signal-desk.html#verifier">Vérifier</a><a href="site-signal-desk.html#faq">FAQ</a></span></div>
+</nav>
+
+<main id="contenu" class="h2">
+<section class="s rk-top hero-img img-rank" id="cm-hero">
+  <a class="rk-back" href="site-signal-desk.html">← Accueil</a>
+  <div class="pr-sub" role="navigation" aria-label="Communauté"><a href="communaute.html" class="on" aria-current="page">Collections</a><a href="marches.html?c=crypto" data-c="crypto">Crypto</a><a href="marches.html?c=sport" data-c="sport">Sport</a><a href="marches.html?c=pol" data-c="pol">Finance / Politique</a><a href="marches.html?c=free" data-c="free">Libre</a></div>
+  <span class="h2-eyebrow">Les callers, par affinités</span>
+  <h1 class="grad rk-title">Communauté</h1>
+  <p class="lead">Tous les profils de Signal Desk, rangés en collections. Suivez une collection entière en un clic, ou ouvrez-la pour choisir.</p>
+  <div class="cm-search"><label class="sr" for="cm-q">Chercher un caller</label><input id="cm-q" type="search" placeholder="Chercher un caller…" autocomplete="off" spellcheck="false"><span class="num" id="cm-count"></span></div>
+</section>
+<section class="h2-sec cm-sec" aria-labelledby="cm-h">
+  <div class="h2-head"><div><span class="h2-eyebrow" id="cm-eyebrow">Collections</span><h2 id="cm-h">Suivez par affinités</h2></div></div>
+  <div class="cm-grid" id="cm-grid"></div>
+  <p class="rk-empty" id="cm-none" hidden>Aucun caller ne correspond à cette recherche.</p>
+</section>
+</main>
+
+<footer>
+  <a class="brand" href="site-signal-desk.html"><span class="mk"><svg><use href="#mark"/></svg></span><span class="bt">Signal Desk</span></a>
+  <div class="flinks" role="navigation" aria-label="Pied de page"><a href="site-signal-desk.html#preuve">Pourquoi</a><a href="site-signal-desk.html#comment">Comment ça marche</a><a href="classement.html">Classement</a><a href="pronostics.html">Pronostics</a><a href="en-direct.html">En direct</a><a href="site-signal-desk.html#verifier">Vérifier</a><a href="site-signal-desk.html#faq">FAQ</a></div>
+  <span>Construit sur Tari Ootle</span><span>Code open source</span><a class="report" href="https://github.com/ogboy92ii/signal-desk/issues/new?labels=traduction&amp;title=Traduction" target="_blank" rel="noopener noreferrer">Signaler une erreur de traduction</a>
+  <span class="sp"></span><a class="btn-link up" href="#contenu"><span class="t">Haut de page</span></a>
+  <p class="fine">Un call vérifié n'est pas un conseil d'investissement.</p>
+</footer>
+
+<!-- Volet wallet : copie de l'accueil, mise à jour par sync_wallet.py -->
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="scrim" id="scrim" hidden></div>
+<dialog class="buydlg" id="buydlg" aria-labelledby="bd-title">
+  <div class="bd-head"><h2 id="bd-title">Vérifier avant de signer</h2><button type="button" class="dr-close" id="bd-x" aria-label="Fermer"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <p class="bd-sub" id="bd-sub"></p>
+  <dl class="bd-sum">
+    <div><dt>Vous payez</dt><dd class="num" id="bd-price"></dd></div>
+    <div><dt>Vous recevez</dt><dd>Le prochain call scellé, lisible dès son ouverture</dd></div>
+    <div><dt>Call jamais ouvert</dt><dd>Remboursé</dd></div>
+    <div><dt>Depuis</dt><dd class="mono" id="bd-from"></dd></div>
+    <div><dt>Réseau</dt><dd id="bd-net"></dd></div>
+  </dl>
+  <div class="acc-card bd-sign"><span class="lbl">Ce que Sapient vous demandera de signer</span><p id="bd-what"></p><small>Si Sapient affiche un autre montant ou un autre contrat, refusez.</small></div>
+  <ul class="bd-checks" id="bd-checks" aria-live="polite"></ul>
+  <a class="lnk bd-get" id="bd-get" href="site-signal-desk.html#commencer" hidden>Comment obtenir des TARI</a>
+  <div class="bd-foot"><button type="button" class="btn-sm bd-go" id="bd-go"></button><button type="button" class="btn-sm" id="bd-cancel">Annuler</button></div>
+</dialog>
+<dialog class="accdlg" id="accdlg" aria-labelledby="pf-acc-h">
+  <div class="acc-head"><h2 id="pf-acc-h">Mon compte</h2><button type="button" class="dr-close" id="acc-x" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="pf-acc-grid">
+      <div class="acc-card pic-card" id="pr-drop"><span class="lbl">Identité</span>
+  
+        <div class="id-row"><button type="button" class="pic-prev" id="pr-pick"><span class="pic-img" id="pr-pic"></span><span class="pic-edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.4"/></svg></span></button>
+  
+          <form class="pr-field" id="pr-form"><label class="sr" for="pr-nick">Pseudo</label><input id="pr-nick" maxlength="24" autocomplete="off" spellcheck="false"><button type="submit" class="btn-sm">Enregistrer</button></form></div>
+  
+        <input type="file" id="pr-file" class="sr" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" tabindex="-1" aria-hidden="true">
+  
+        <div class="id-foot"><small>Photo et pseudo restent dans ce navigateur.</small><button type="button" class="lnk" id="pr-unpic" hidden>Retirer la photo</button></div></div>
+  
+      <div class="acc-card" id="pr-addrs"><span class="lbl">Adresse du wallet</span>
+  
+        <div class="addr-row" id="pr-wrow"><span>Wallet · pour recevoir</span><code class="mono" id="pr-waddr"></code><button type="button" class="ico" id="pr-copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A1.5 1.5 0 0 1 6.5 5H15"/></svg></button></div></div>
+  
+      <div class="acc-card" id="fl-card"><span class="lbl">Abonnements</span>
+        <p class="fl-txt" id="fl-txt">Vos abonnements enregistrés sur la blockchain : retrouvés sur tous vos appareils, vérifiables par tous.</p>
+        <button type="button" class="btn-sm" id="fl-sync" hidden>Enregistrer sur la blockchain</button></div>
+      <div class="acc-card" id="bs-card"><span class="lbl">Bluesky</span>
+  
+        <form id="bs-form" class="pr-field bs-off" novalidate><button type="submit" class="btn-sm">Connecter Bluesky</button></form>
+  
+        <div id="bs-off"><small>Affiche votre @identifiant vérifié sur votre profil et permet de répondre aux discussions. Le site ne publie que les réponses que vous écrivez et validez.</small></div>
+  
+        <div id="bs-on" hidden><b id="bs-handle"></b> <span class="bs-ok">vérifié</span><button type="button" class="lnk" id="bs-out">Déconnecter Bluesky</button></div></div>
+  
+  
+    </div>
+</dialog>
+<dialog class="accdlg sealdlg" id="sealdlg" aria-labelledby="seal-h">
+  <div class="acc-head"><h2 id="seal-h">Sceller un call</h2><button type="button" class="dr-close" id="seal-x" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <p class="seal-intro">Votre analyse, scellée sur la blockchain avant le marché : personne ne peut la lire avant l’ouverture, et vous ne pouvez plus la changer.</p>
+  <ol class="seal-steps"><li id="seal-s1"><b>Remplir le call</b><small>Marché, niveaux, prix, ouverture.</small></li><li id="seal-s2"><b>Signer</b><small>La première fois, le wallet demande aussi de créer votre desk.</small></li><li><b>Livrer aux acheteurs</b><small>Tous en une signature, depuis votre profil.</small></li></ol>
+      <div class="acc-card" id="dk"><span class="lbl">Mon desk</span>
+  
+        <div id="dk-off"><b>Aucun desk ouvert</b><small id="dk-off-s">Ouvrir un desk sera possible dès la publication du contrat Signal Desk.</small><button type="button" class="btn-sm dk-btn" id="dk-open" hidden>Ouvrir mon desk</button></div>
+  
+        <div id="dk-on" hidden>
+  
+          <dl class="dk-sum"><div><dt>Calls scellés</dt><dd class="num" id="dk-n"></dd></div><div><dt>Ouverts</dt><dd class="num" id="dk-o"></dd></div><div><dt>Jamais ouverts</dt><dd class="num" id="dk-l"></dd></div><div><dt>À retirer</dt><dd class="num" id="dk-w"></dd></div></dl>
+  
+          <button type="button" class="btn-sm dk-btn" id="dk-withdraw" hidden>Retirer vers mon compte</button>
+  
+          <form class="dk-form" id="dk-form" novalidate>
+  
+            <span class="lbl2">Sceller un call</span>
+            <label class="dk-wide">Catégorie<select id="dk-cat"><option value="crypto">Crypto</option><option value="sport">Sport</option><option value="pol">Finance / Politique</option><option value="free">Libre</option></select></label>
+            <div class="dk-g" data-cat="sport" hidden>
+            <label>Ligue<select id="dk-lg"><option value="NFL">NFL</option><option value="NBA">NBA</option><option value="UCL">Ligue des champions</option><option value="EPL">Premier League</option><option value="UFC">UFC</option></select></label>
+            <label>Début du match<input id="dk-kick" type="datetime-local"></label>
+            <label><span id="dk-a-l">Équipe à l'extérieur</span><input id="dk-a" placeholder="KC" maxlength="24" autocomplete="off" spellcheck="false"></label>
+            <label><span id="dk-b-l">Équipe à domicile</span><input id="dk-b" placeholder="BUF" maxlength="24" autocomplete="off" spellcheck="false"></label>
+            <label class="dk-wide">Pronostic<select id="dk-kind"></select></label>
+            <label data-k="WIN SPREAD METHOD">Choix<input id="dk-pick" placeholder="KC" maxlength="24" autocomplete="off" spellcheck="false"></label>
+            <label data-k="PROP">Joueur<input id="dk-player" placeholder="MAHOMES" maxlength="24" autocomplete="off" spellcheck="false"></label>
+            <label data-k="PROP">Statistique<select id="dk-stat"></select></label>
+            <label data-k="TOTAL PROP ROUNDS">Plus ou moins<select id="dk-ou"><option value="OVER">Plus de</option><option value="UNDER">Moins de</option></select></label>
+            <label data-k="SPREAD TOTAL PROP ROUNDS">Ligne<input id="dk-line" inputmode="decimal" autocomplete="off" placeholder="47.5"></label>
+            <label data-k="METHOD">Méthode<select id="dk-meth"></select></label>
+            </div>
+            <div class="dk-g" data-cat="pol" hidden>
+            <label>Source officielle<select id="dk-cc"><option value="US">États-Unis</option><option value="FR">France</option><option value="BE">Belgique</option><option value="EU">Union européenne</option><option value="GB">Royaume-Uni</option></select></label>
+            <label>Résultat attendu<input id="dk-when" type="datetime-local"></label>
+            <label class="dk-wide">Sujet<input id="dk-subj" placeholder="SOL ETF APPROVAL" autocomplete="off" spellcheck="false" maxlength="40"></label>
+            <label class="dk-wide">Votre choix<input id="dk-opt" placeholder="YES" autocomplete="off" spellcheck="false" maxlength="40"></label>
+            </div>
+            <div class="dk-g" data-cat="free" hidden>
+            <label class="dk-wide">Sujet public<input id="dk-fsubj" placeholder="Bitcoin halving" autocomplete="off" spellcheck="false" maxlength="40"></label>
+            <label class="dk-wide">Votre call, secret jusqu'à l'ouverture<input id="dk-ftext" autocomplete="off" maxlength="110"></label>
+            <label>Échéance<input id="dk-fwhen" type="datetime-local"></label>
+            <small class="dk-wide">Sans accents, 110 caractères au plus. Résultat non vérifié par le site, hors classement.</small>
+            </div>
+            <div class="dk-g" data-cat="crypto">
+  
+            <label>Paire<input id="dk-asset" placeholder="BTCUSDT" maxlength="20" autocomplete="off" spellcheck="false"></label>
+  
+            <label>Sens<select id="dk-side"><option value="LONG">LONG</option><option value="SHORT">SHORT</option></select></label>
+  
+            <label>Entrée<input id="dk-entry" inputmode="decimal" autocomplete="off"></label>
+  
+            <label>Objectif<input id="dk-tp" inputmode="decimal" autocomplete="off"></label>
+  
+            <label>Stop<input id="dk-sl" inputmode="decimal" autocomplete="off"></label>
+  
+            <label>Échéance<input id="dk-until" type="datetime-local"></label>
+            </div>
+            <small class="dk-wide dk-pub" id="dk-pub"></small>
+  
+            <label>Prix (TARI)<input id="dk-price" inputmode="numeric" autocomplete="off"></label>
+  
+            <div class="dk-wide dk-open"><span class="dk-ol">Ouverture du call</span><div class="h2-chips" id="dk-open-at" role="group" aria-label="Ouverture du call"><button type="button" data-h="due" aria-pressed="true">À l'échéance</button><button type="button" data-h="1" aria-pressed="false">Dans 1 h</button><button type="button" data-h="6" aria-pressed="false">Dans 6 h</button><button type="button" data-h="24" aria-pressed="false">Dans 1 jour</button><button type="button" data-h="72" aria-pressed="false">Dans 3 jours</button></div><input type="hidden" id="dk-in"></div>
+  
+            <small class="dk-wide" id="dk-epoch"></small>
+  
+            <button type="submit" class="btn-sm dk-wide" id="dk-seal">Sceller dans Sapient</button>
+  
+            <small class="dk-wide">Une seule signature dans Sapient. Le call est verrouillé jusqu’à son heure d’ouverture, puis s’ouvre tout seul : vous n’avez pas à revenir.</small>
+  
+          </form>
+  
+  
+  
+        </div></div>
+</dialog>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="pf-title" hidden>
+  <div class="dr-hero">
+  <div class="dr-head"><div class="dr-id"><span class="av lg" id="pf-av" aria-hidden="true"></span><div><div class="dr-name"><h2 id="pf-title">Mon compte</h2><button type="button" class="dr-edit" id="pf-edit" aria-label="Modifier mon compte" title="Modifier mon compte"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg></button></div><button type="button" class="dr-addr mono" id="pf-acct"><span id="pf-acct-t"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6.5A1.5 1.5 0 0 1 6.5 5H15"/></svg></button></div></div><button type="button" class="dr-close" id="drclose" aria-label="Fermer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <a class="dr-prof" href="profil.html">Voir mon profil<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></a>
+  <div class="dr-bal"><div><span class="lbl2">Solde</span><b class="num" id="pf-bal">—</b></div><div class="dr-bal-r"><span class="w-net dk" id="pf-net"></span><button type="button" class="ico" id="pf-refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button></div></div>
+  <p class="dr-warn" id="pf-warn" hidden></p>
+  </div>
+  <div class="dr-nav" role="tablist" aria-label="Espace compte">
+    <button type="button" role="tab" id="sec-t1" aria-controls="sec-pf" aria-selected="true">Portfolio</button>
+    <button type="button" role="tab" id="sec-t3" aria-controls="sec-st" aria-selected="false" tabindex="-1">Réglages</button>
+  </div>
+  <div class="sec" role="tabpanel" id="sec-pf" aria-labelledby="sec-t1">
+  <div class="tabs-pf" role="tablist" aria-label="Mon portfolio">
+    <button type="button" role="tab" id="tab-a" aria-controls="pan-a" aria-selected="true">En cours<span class="cnt" id="cnt-a"></span></button>
+    <button type="button" role="tab" id="tab-b" aria-controls="pan-b" aria-selected="false" tabindex="-1">Ouverts<span class="cnt" id="cnt-b"></span></button>
+    <button type="button" role="tab" id="tab-c" aria-controls="pan-c" aria-selected="false" tabindex="-1">Remboursés<span class="cnt" id="cnt-c"></span></button>
+    <button type="button" role="tab" id="tab-d" aria-controls="pan-d" aria-selected="false" tabindex="-1">Pronostics<span class="cnt" id="cnt-d"></span></button>
+  </div>
+  <div class="pan" role="tabpanel" id="pan-a" aria-labelledby="tab-a">
+    <div class="empty" hidden><p>Aucun call en cours.</p><a class="lnk" href="classement.html">Voir le classement</a></div>
+  </div>
+  <div class="pan" role="tabpanel" id="pan-b" aria-labelledby="tab-b" hidden>
+    <div class="empty" hidden><p>Aucun call ouvert pour l'instant.</p><a class="lnk" href="classement.html">Voir le classement</a></div>
+  </div>
+  <div class="pan" role="tabpanel" id="pan-c" aria-labelledby="tab-c" hidden>
+    <div class="empty" hidden><p>Aucun remboursement.</p></div>
+  </div>
+  <div class="pan" role="tabpanel" id="pan-d" aria-labelledby="tab-d" hidden>
+    <div class="empty" hidden><p>Aucun pronostic scellé.</p><a class="lnk" href="pronostics.html">Voir les pronostics</a></div>
+  </div>
+  <button type="button" class="lnk pf-imp" id="pf-import">Importer une sauvegarde d'achat</button><input type="file" id="pf-file" class="sr" accept="application/json,.json" tabindex="-1" aria-hidden="true">
+  </div>
+  <div class="sec" role="tabpanel" id="sec-st" aria-labelledby="sec-t3" hidden>
+    <div class="acc-card"><span class="lbl">Affichage</span>
+      <div class="set-row"><label for="st-lang">Langue</label><select id="st-lang"></select></div>
+      <div class="set-row"><label for="st-dec">Décimales du solde</label><select id="st-dec"><option value="2">2</option><option value="6">6</option></select></div>
+      <div class="set-row"><span id="lbl-hide">Masquer le solde</span><button type="button" class="sw" role="switch" aria-checked="false" aria-labelledby="lbl-hide" id="st-hide"></button></div>
+      <div class="set-row"><span id="lbl-mask">Masquer l'adresse</span><button type="button" class="sw" role="switch" aria-checked="false" aria-labelledby="lbl-mask" id="st-mask"></button></div>
+      <div class="set-row"><span id="lbl-calm">Réduire les animations</span><button type="button" class="sw" role="switch" aria-checked="false" aria-labelledby="lbl-calm" id="st-calm"></button></div>
+      <div class="set-row"><span id="lbl-3d">Scène 3D</span><button type="button" class="sw" role="switch" aria-checked="false" aria-labelledby="lbl-3d" id="st-3d"></button></div>
+    </div>
+    <div class="acc-card"><span class="lbl">Connexion et sécurité</span>
+      <div class="set-row"><span id="lbl-auto">Reconnexion automatique</span><button type="button" class="sw" role="switch" aria-checked="false" aria-labelledby="lbl-auto" id="st-auto"></button></div>
+      <div class="set-row"><label for="st-idle">Déconnexion automatique</label><select id="st-idle"><option value="0">Jamais</option><option value="15">15 min</option><option value="60">1 h</option></select></div>
+      <div class="set-row"><span id="lbl-warn">Avertir hors du mainnet</span><button type="button" class="sw" role="switch" aria-checked="false" aria-labelledby="lbl-warn" id="st-warn"></button></div>
+    </div>
+    <div class="acc-card"><span class="lbl">Mes données</span><small>Le pseudo, la photo et les réglages restent dans ce navigateur. Rien n'est envoyé ni écrit on-chain.</small>
+      <button type="button" class="btn-sm danger" id="st-erase">Effacer mes données locales</button></div>
+  </div>
+  <button type="button" class="btn-link dr-out" id="disconnect"><span class="t">Déconnecter</span></button>
+</aside>
+
+
+<script src="i18n/k.js"></script>
+<script src="lang.js"></script>
+<script src="moderation.js"></script>
+<script src="sports.js"></script>
+<script src="fx.js"></script>
+<script src="vendor/noble.js"></script>
+<script src="crypto.js"></script>
+<script src="chain.js"></script>
+<script src="wallet.js"></script>
+<script src="motion.js"></script>
+<script src="callanim.js"></script>
+<script src="desk.js"></script>
+<script src="portfolio.js"></script>
+<script src="bluesky.js"></script>
+<script src="social.js"></script>
+<script src="prices.js"></script>
+<script src="data.js"></script>
+<script src="nav.js"></script>
+<script src="bg.js"></script>
+<script src="clickable.js"></script>
+<script src="communaute.js"></script>
+</body>
+</html>
