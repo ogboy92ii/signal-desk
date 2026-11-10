@@ -76,7 +76,7 @@
   const timer = x => { const b = el('b', 'num h2-clock'); if (x.phase === 'on-sale' && x.left > 0) { b.dataset.left = x.left; b.textContent = clock(left(x.left)); } else b.textContent = t('ouverture…'); return b; };
   // Achat d'un call encore en vente (prix et numéro lus sur la chaîne).
   const buyBtn = (c, x, cls, label) => {
-    if (x.phase !== 'on-sale' || !(x.price > 0)) return null;
+    if (x.phase !== 'on-sale' || !(x.price > 0) || x.demo) return null;
     const b = el('button', cls, label); b.type = 'button';
     b.addEventListener('click', () => window.sdBuy && window.sdBuy(c.name, x.price, c.desk, x.seq)); return b;
   };

@@ -91,6 +91,7 @@
     // Achat possible seulement tant que le call est en vente ; ensuite, l'ouverture est en cours.
     let buy;
     if (x.phase !== 'on-sale') buy = el('span');
+    else if (x.demo) buy = el('span', 'h2-demo', t('Démonstration')); // desk de démonstration : rien à acheter
     else if (x.price > 0) { buy = el('button', 'h2-mk-buy', num(x.price) + ' TARI'); buy.type = 'button'; buy.addEventListener('click', () => window.sdBuy && window.sdBuy(c.name, x.price, c.desk, x.seq)); }
     else buy = el('span');
     foot.append(el('span', '', num(x.buyers || 0) + ' ' + window.sdPl(x.buyers || 0, 'acheteur', 'acheteurs')), buy);

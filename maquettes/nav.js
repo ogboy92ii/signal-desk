@@ -128,7 +128,7 @@
     if (!list.length) { if (!todo.length) feed.appendChild(el('li', 'none', t('Suivez des callers et activez leur cloche pour recevoir leurs calls ici.'))); return; }
     for (const ev of list) {
       // P6 (09/11) : un call encore en vente ouvre directement la fenêtre d'achat (mêmes vérifications, signature dans Sapient).
-      const buy = ev.x.res === 'live' && ev.x.phase === 'on-sale' && ev.x.desk;
+      const buy = ev.x.res === 'live' && ev.x.phase === 'on-sale' && ev.x.desk && !ev.x.demo;
       const li = el('li', fresh(ev) ? 'new' : ''), a = el('a'); a.href = buy ? 'profil.html?c=' + encodeURIComponent(ev.n) + '&achat=' + ev.x.desk + '&n=' + ev.x.seq + '&r=' + D().network
         : 'profil.html?c=' + encodeURIComponent(ev.n) + (ev.x.res === 'live' ? '' : '&call=' + ev.x.n);
       const av = el('span', 'av'); av.appendChild(D().avatar(ev.n));

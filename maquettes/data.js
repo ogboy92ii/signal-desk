@@ -43,7 +43,9 @@
         const x = { n: k.seq + 1, seq: k.seq, desk: d.address, cat: sport ? 'sport' : pol ? 'pol' : free ? 'free' : 'crypto', sub: pol ? parts[1] : free ? '' : sport ? sym : sym.replace(/USDT$/, ''),
           pair: pol ? parts[2] : free ? parts[1] : sport ? sym + ' ' + parts[1].replace('@', ' @ ') : sym, dir: null, pk: null, hz: '', res: 'live', ago: 0,
           left: Math.max(0, Math.round((msAt(k.revealAtEpoch) - now) / 1000)), buyers: k.sold || 0, price: k.price === null ? 0 : Number(k.price / 1000000n), move: 0,
-          sealedAt: msAt(k.sealedAtEpoch), phase: ph, commitment: k.commitment, tlockAt: C.tlockOpensAt(k) };
+          sealedAt: msAt(k.sealedAtEpoch), phase: ph, commitment: k.commitment, tlockAt: C.tlockOpensAt(k),
+          // Desk de démonstration (liste `official` de chain.js) : ses robots sont arrêtés, ses calls ne sont plus livrés ni vendus.
+          demo: C.isOfficial(NETWORK, d.address) };
         // Sans robot (10/11) : un call dont le verrou temporel est tombé est ouvert pour tout le monde, même si personne n'a
         // inscrit son ouverture sur la chaîne. Le site lit sa copie verrouillée (vérifiée contre l'engagement, chain.js lockedCall).
         const lock = ph !== 'revealed' && x.tlockAt && now >= x.tlockAt ? await C.lockedCall(d, k).catch(() => null) : null;

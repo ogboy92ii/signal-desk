@@ -39,6 +39,7 @@
   const buyBtn = (c, x) => {
     if (x.phase !== 'on-sale') return el('span', 'lv-kind', t('ouverture…'));
     if (!(x.price > 0)) return el('span');
+    if (x.demo) return el('span', 'h2-demo', t('Démonstration'));
     const b = el('button', 'h2-mk-buy', num(x.price) + ' TARI'); b.type = 'button';
     b.addEventListener('click', () => window.sdBuy && window.sdBuy(c.name, x.price, c.desk, x.seq)); return b;
   };

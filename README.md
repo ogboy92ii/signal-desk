@@ -83,8 +83,9 @@ Not guaranteed: the quality of a call.
   refunded.
 - **Finance / Politics results are settled by the site operator**, from the official source named in
   the call. This is the Kalshi model, not a decentralised oracle.
-- **Demo desks.** The desks marked ✓ are bots run by the project (`robot/`) so that the testnet app
-  is not empty. They follow public rules written in their bio and are labelled as bots.
+- **Demo desks.** The desks marked ✓ were sealed by bots the project ran (`robot/`) to fill the
+  testnet app at launch, following public rules written in their bio. The bots are stopped: their
+  calls stay on chain and open by themselves, and the app no longer offers them for sale.
 - Testnet only for now: testnet TARI have no value.
 
 ## Repository layout
@@ -95,7 +96,7 @@ Not guaranteed: the quality of a call.
 | `forecasts/` | Leagues template (5 unit, 11 engine tests) |
 | `follows/` | Follow-list template (6 engine tests) |
 | `maquettes/` | The web app: static HTML, CSS and JavaScript, no build step, no framework |
-| `robot/` | Demo bots (signals, league questions) and the tool that lists calls awaiting a verdict |
+| `robot/` | The demo bots behind the ✓ desks (no longer run) and the tool that lists calls awaiting a verdict |
 | `scripts/` | Release checks (binary scan, reviewed dependencies) |
 
 ## Run the app locally

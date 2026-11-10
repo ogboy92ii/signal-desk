@@ -1369,6 +1369,7 @@ section.hero-img::after{content:"";position:absolute;inset:0;height:auto;z-index
 .pr-sub .n{margin-left:8px;font-size:11.5px;color:var(--fg3)}.pr-sub [aria-pressed="true"] .n,.pr-sub .on .n{color:var(--fg2)}
 #h2-fc-cats{margin:0 0 18px}
 .h2-src{font-size:12px;color:var(--fg3)}
+.h2-demo{font-size:12px;color:var(--fg3);padding:4px 10px;border:1px solid var(--line);border-radius:999px;white-space:nowrap}
 .pr-card.pr-hit{border-color:rgba(165,123,255,.6);box-shadow:0 0 0 3px rgba(129,59,245,.18);scroll-margin-top:150px}
 /* Pastilles du sujet (10/11) : logo crypto, drapeau ou sigles des équipes */
 .pr-sj{display:inline-flex;align-items:center}.pr-vis .pr-sj{position:absolute;left:22px;bottom:12px}

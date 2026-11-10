@@ -555,6 +555,8 @@
             if (ok && span > 0 && gone / span > 0.5) { ok = false; msg = 'Plus de la moitié de la durée de ce call est écoulée : achat bloqué pour vous protéger.'; }
             else if (ok && left < 2) { ok = false; msg = "Ce call s'ouvre dans moins de 2 h : achat bloqué pour vous protéger."; }
             if (ok && move !== null && Math.abs(move) > 2) info = '⚠ ' + info + ' ' + t('Le call a pu être déjà entamé.');
+            // Desk de démonstration : dernier garde-fou, quel que soit le bouton ou le lien qui a ouvert cette fenêtre.
+            if (chain().isOfficial(net, o.addr)) { ok = false; msg = 'Desk de démonstration : ses calls ne sont plus livrés, achat désactivé.'; }
             // Call libre (10/11) : dit avant de payer que personne ne vérifiera son résultat.
             if (String(c.label).startsWith('FREE|')) info = '⚠ ' + t('Call libre : son résultat n’est pas vérifié par le site et il ne compte pas au classement.') + ' ' + info;
           }

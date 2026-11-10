@@ -94,7 +94,7 @@
       bell.hidden = !D.follow.has(P.name); bell.setAttribute('aria-pressed', String(D.follow.bell(P.name))); bell.setAttribute('aria-label', t('Notifications de ses calls'));
       bell.addEventListener('click', () => { const on = D.follow.toggleBell(P.name); bell.setAttribute('aria-pressed', String(on)); say(on ? 'Notifications activées.' : 'Notifications coupées.'); });
       // Le call en vente le plus récent de ce desk (adresse + numéro lus sur la chaîne) ; aucun : bouton désactivé.
-      const sale = (P.calls || []).find(x => x.phase === 'on-sale' && x.price > 0);
+      const sale = (P.calls || []).find(x => x.phase === 'on-sale' && x.price > 0 && !x.demo);
       // Recette V9 : sans call en vente, un simple texte (le bouton violet désactivé ressemblait à un achat).
       const buy = sale ? el('button', 'buy', t('Acheter le prochain call')) : el('span', 'pf-nosale', t('Aucun call en vente pour le moment.')); if (sale) buy.type = 'button';
       if (sale) buy.addEventListener('click', () => window.sdBuy && window.sdBuy(P.name, sale.price, P.desk, sale.seq));
@@ -279,7 +279,7 @@
       const det = live ? A().hexNode(c.commitment) : el('span', 'rg-txt', c.hz || (c.pk && c.opened ? D.pick(c) : ''));
       // Call en vente : acheté depuis sa ligne (adresse du desk + numéro lus sur la chaîne).
       const acts = el('span', 'rg-act');
-      if (c.phase === 'on-sale' && c.price > 0 && P.desk) {
+      if (c.phase === 'on-sale' && c.price > 0 && P.desk && !c.demo) {
         const b = el('button', 'btn-sm', t('Acheter') + ' · ' + num(c.price) + ' TARI'); b.type = 'button';
         b.addEventListener('click', e => { e.stopPropagation(); if (window.sdBuy) window.sdBuy(P.name, c.price, P.desk, c.seq); });
         acts.appendChild(b);
