@@ -10,7 +10,12 @@ document.querySelectorAll('form.field').forEach(f => f.addEventListener('submit'
   const skip = el => el.closest('script,style,svg,#langdock,[data-n]');
   const texts = [];
   const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: n => n.nodeValue.trim() && !skip(n.parentElement) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT });
-  for (let n; (n = walk.nextNode());) texts.push({ n, fr: n.nodeValue, key: n.nodeValue.trim() });
+  // 11/11 : réseau affiché (même règle que chain.js VIEW) ; le bandeau « En ligne sur le testnet Tari » des pages suit ce réseau.
+  window.SD_NET = (() => { let n = null; try { n = new URLSearchParams(location.search).get('net') || localStorage.getItem('sd-net'); } catch (e) {} return n === 'esmeralda' ? 'esmeralda' : 'mainnet'; })();
+  for (let n; (n = walk.nextNode());) {
+    if (window.SD_NET === 'mainnet' && n.nodeValue.trim() === 'En ligne sur le testnet Tari') n.nodeValue = n.nodeValue.replace('testnet', 'mainnet');
+    texts.push({ n, fr: n.nodeValue, key: n.nodeValue.trim() });
+  }
   const attrs = [...document.querySelectorAll('[placeholder],[aria-label="Langue"]')].map(el => ({ el, ph: el.getAttribute('placeholder'), aria: el.getAttribute('aria-label') }));
   const frTitle = document.title;
   // Nombres français affichés en dur (« 1 284 », « 54,2 % ») : reformatés pour la langue choisie.

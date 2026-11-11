@@ -76,7 +76,7 @@
       // P3 (09/11) : le call était-il encore valable à l'heure de l'achat ? (échéance, objectif ou stop déjà touché)
       if (pc && pc.cat === 'crypto' && p.at && r.call && window.sdPrices) {
         const warn = el('p', 'pb-warn'); warn.hidden = true; callBox.appendChild(warn);
-        const until = Date.parse(pc.until), sealedAt = Date.now() - (epoch - r.call.sealedAtEpoch) * C().EPOCH_MS;
+        const until = Date.parse(pc.until), sealedAt = Date.now() - (epoch - r.call.sealedAtEpoch) * C().epochMs(p.network);
         if (until && until <= p.at) { warn.textContent = t('Call déjà terminé à l’achat : son échéance était passée.'); warn.hidden = false; }
         else window.sdPrices.outcome(pc, sealedAt, p.desk.slice(10, 26) + ':' + p.seq).then(o => {
           if (o && ['win', 'loss', 'invalid'].includes(o.state) && o.at <= p.at) { warn.textContent = t('Call déjà joué à l’achat : objectif ou stop touché avant votre paiement.'); warn.hidden = false; }

@@ -7,7 +7,8 @@
 
   // Desks réels : remplis par loadReal(), dans ce tableau (les pages gardent la même référence).
   const base = [];
-  const NETWORK = 'esmeralda';
+  // 11/11 : réseau affiché (mainnet par défaut, testnet au choix). Sur l'accueil data.js est chargé AVANT chain.js : même règle relue ici.
+  const NETWORK = (window.sdChain && window.sdChain.view) || (() => { let n = null; try { n = new URLSearchParams(location.search).get('net') || localStorage.getItem('sd-net'); } catch (e) {} return n === 'esmeralda' ? 'esmeralda' : 'mainnet'; })();
   // Classé : au moins RANK_MIN calls clos (un seul bon call ne fait pas un classement).
   const RANK_MIN = 3;
   const DAY = 864e5;
@@ -82,7 +83,7 @@
       // ✓ = desk officiel (liste d'adresses de chain.js) : le contrat refuse ce caractère dans un nom, il ne s'imite pas.
       const display = (d.name || ('Desk ' + d.address.slice(10, 14) + '…' + d.address.slice(-4))) + (C.isOfficial(NETWORK, d.address) ? ' ✓' : '');
       return { name: slug(d.name, d.address, used), display, desk: d.address, publisher: d.publisher, payout: d.payout, bio: d.bio, picture: d.picture,
-        style: calls.filter(x => x.cat === 'sport').length > calls.length / 2 ? 'sport' : 'crypto', age: Math.max(0, Math.floor((epoch - d.openedAtEpoch) * C.EPOCH_MS / DAY)), openedAtEpoch: d.openedAtEpoch,
+        style: calls.filter(x => x.cat === 'sport').length > calls.length / 2 ? 'sport' : 'crypto', age: Math.max(0, Math.floor((epoch - d.openedAtEpoch) * C.epochMs(NETWORK) / DAY)), openedAtEpoch: d.openedAtEpoch,
         followers: graph.followers.get(d.address) || 0, following: graph.following.get(d.publisher) || 0, allCalls: calls };
     };
     for (let i = 0; i < sorted.length; i += 6) out.push(...await Promise.all(sorted.slice(i, i + 6).map(one)));

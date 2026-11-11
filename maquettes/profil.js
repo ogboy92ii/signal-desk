@@ -396,7 +396,7 @@
           state: ph === 'on-sale' ? (C.tlockOpensAt(c) ? opensAt(c) : t("s'ouvre vers l'époque {e}").replace('{e}', num(c.revealAtEpoch))) : ph === 'revealing' ? (s ? t('à ouvrir') : opensAt(c)) : ph === 'revealed' ? t('engagement vérifié · ouvert') : t('acheteurs remboursés'),
           actions: acts });
         // Call crypto ouvert : résultat calculé sur les prix publics (prices.js), heure de scellement déduite des époques (≈ 1 h).
-        if (ph === 'revealed' && s && window.sdPrices) { const pc = C.parseCall(s.payload); if (pc && pc.cat === 'crypto') outcomeInto(row, pc, Date.now() - (r.epoch - c.sealedAtEpoch) * 3600e3, d.address + ':' + c.seq); }
+        if (ph === 'revealed' && s && window.sdPrices) { const pc = C.parseCall(s.payload); if (pc && pc.cat === 'crypto') outcomeInto(row, pc, Date.now() - (r.epoch - c.sealedAtEpoch) * C.epochMs(net), d.address + ':' + c.seq); }
         const act = (label, fn, ok) => {
           const b = el('button', 'btn-sm', label); b.type = 'button';
           b.addEventListener('click', async () => {

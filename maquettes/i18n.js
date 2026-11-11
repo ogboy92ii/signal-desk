@@ -9324,3 +9324,10 @@ window.SD_T = {
   const L = ["en","zh","ru","tr","vi","id","ko","pt"];
   for (const [k, v] of Object.entries(add)) { if (window.SD_K.includes(k)) continue; window.SD_K.push(k); L.forEach((l, i) => window.SD_T[l].push(v[i])); }
 })();
+
+// 11/11 : bandeau de statut sur le mainnet.
+(() => {
+  const add = {"En ligne sur le mainnet Tari":["Live on Tari mainnet","已在 Tari 主网上线","Работает в основной сети Tari","Tari ana ağında yayında","Đang chạy trên mainnet Tari","Aktif di mainnet Tari","Tari 메인넷에서 운영 중","No ar na mainnet da Tari"]};
+  const L = ["en","zh","ru","tr","vi","id","ko","pt"];
+  for (const [k, v] of Object.entries(add)) { if (window.SD_K.includes(k)) continue; window.SD_K.push(k); L.forEach((l, i) => window.SD_T[l].push(v[i])); }
+})();

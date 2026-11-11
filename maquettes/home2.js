@@ -157,11 +157,11 @@
   const optsOf = m => (m.type === 'yesno' ? ['Oui', 'Non'] : m.type === 'updown' ? ['▲ Hausse', '▼ Baisse']
     : m.type === 'choice' && Array.isArray(m.opts) ? m.opts.filter(x => typeof x === 'string').slice(0, 8) : ['Répondre']);
   async function loadBoard() {
-    const C = window.sdChain, net = 'esmeralda';
+    const C = window.sdChain, net = (C && C.view) || 'mainnet', EP = C && C.epochMs ? C.epochMs(net) : 3600e3;
     if (!C || !C.forecastsLive || !C.forecastsLive(net)) return;
     const [b, ep] = await Promise.all([C.readBoard(net), C.currentEpoch(net)]);
     // Heure de clôture : l'époque de la chaîne fait foi (≈ 1 h par époque), la date `close_utc` si elle concorde.
-    const closeMs = q => { const est = Date.now() + (q.close - ep) * 3600e3, u = Date.parse(q.meta.close_utc); return Number.isFinite(u) && Math.abs(u - est) <= 2 * 3600e3 ? u : est; };
+    const closeMs = q => { const est = Date.now() + (q.close - ep) * EP, u = Date.parse(q.meta.close_utc); return Number.isFinite(u) && Math.abs(u - est) <= 2 * 3600e3 ? u : est; };
     board = (b ? b.questions : []).filter(q => ep < q.close).map(q => ({ q: q.meta.q, type: q.meta.type, opts: optsOf(q.meta), n: q.forecasts.length, close: closeMs(q) }));
     forecasts();
   }

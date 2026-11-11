@@ -2,7 +2,8 @@
 
 **Calls nobody can fake, sealed on the Tari Ootle.**
 
-Live app (testnet esmeralda, Sapient wallet): **https://signal-desk-ootle.vercel.app**
+Live app (Ootle mainnet by default, Sapient wallet): **https://signal-desk-ootle.vercel.app**
+The Testnet switch in the top bar shows the earlier demo content on esmeralda.
 
 A caller opens one desk. Every call they seal gets a number in the desk's registry and can never be
 removed or edited. Buyers pay in TARI and receive the call encrypted for them alone. At the deadline
@@ -41,6 +42,18 @@ Crypt (October, private delivery with an on-chain dispute).
 - **Follow callers** with a list stored on chain, readable from any device.
 - **A leaderboard** built only from sealed calls: a call that was never opened counts as lost.
 - 9 languages (English by default), mobile and desktop.
+
+## On chain (mainnet, published 11 November 2026)
+
+| Template | Address | Publish transaction |
+|---|---|---|
+| Desk (`src/`) | `template_65d9bbc931d306d2de9b235d7a0272f0dae05d061ed38f3c09467b972289b455` | `018c99cfbd234d88d4a3664da505f8bc2a9a09d7c65f574ac1f68b19a6ef6a6c` |
+| Forecasts, leagues (`forecasts/`) | `template_4e58dcb438e1d69b99b6991d61f33cd26bd9866c59cdf86ef23e9f493f170f49` | `952aaeb240aac476735087eaab21cb42e120f5790caf791d85f55f0f68e23665` |
+| Follows (`follows/`) | `template_b622b0ada7ee233eabe33d7111c641ebdbd281e877bb217c6f32d287e250eecf` | `7bbcce8970a4d05e6c645cca6ac0c64ec97716236ce5c2fedd424fc5d8e99ce4` |
+
+A mainnet epoch is 10 base-layer blocks (about 20 minutes), against about one hour on esmeralda. The
+contract counts in epochs, so on mainnet a call opens within a window of about 3 h 20 and its
+deadline is at most about 33 hours away.
 
 ## On chain (testnet esmeralda)
 
@@ -86,7 +99,7 @@ Not guaranteed: the quality of a call.
 - **Demo desks.** The desks marked ✓ were sealed by bots the project ran (`robot/`) to fill the
   testnet app at launch, following public rules written in their bio. The bots are stopped: their
   calls stay on chain and open by themselves, and the app no longer offers them for sale.
-- Testnet only for now: testnet TARI have no value.
+- Mainnet uses real TARI; the mainnet side starts empty. Testnet TARI have no value.
 
 ## Repository layout
 

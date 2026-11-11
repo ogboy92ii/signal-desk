@@ -202,7 +202,8 @@
 
   // ---- Ouverture : en durée ou « à l'échéance », convertie en époques (le contrat ne connaît qu'elles) ----
   // Une époque = 80 blocs L1 ≈ 1 h sur esmeralda (mesuré le 03/11/2026 : 281 blocs en 3 h 30).
-  const EPOCH_MS = 3600e3;
+  // 11/11 : sur le mainnet une époque = 10 blocs ≈ 20 min → la durée vient du réseau du wallet (chain.js epochMs).
+  const EP = () => (C() && C().epochMs ? C().epochMs(ctx().net) : 3600e3);
   let openAt = 'due';
   const dueDate = () => {
     const iso = $(dateId()).value;
@@ -244,21 +245,21 @@
     if (!/^\d{1,6}$/.test(v('dk-price')) || +v('dk-price') < 1) bad.push('dk-price');
     return bad;
   }
-  const tooFar = (target, max) => t('Match trop lointain : ce call pourra être scellé à partir du {d}.').replace('{d}', shown(new Date(target.getTime() - max * EPOCH_MS)));
+  const tooFar = (target, max) => t('Match trop lointain : ce call pourra être scellé à partir du {d}.').replace('{d}', shown(new Date(target.getTime() - max * EP())));
   function openInfo() {
     const out = $('dk-epoch'), e = cur.epoch, max = C() ? C().MAX_CALL_HORIZON_EPOCHS : 100; // R2 : horizon borné par le verrou drand
     const target = openAt === 'due' ? dueDate() : new Date(Date.now() + openAt * 3600e3);
     if (!target) { $('dk-in').value = ''; out.textContent = t("Choisissez d'abord la date de l'échéance."); return; }
-    const n = Math.max(1, Math.ceil((target - Date.now()) / EPOCH_MS));
+    const n = Math.max(1, Math.ceil((target - Date.now()) / EP()));
     if (n > max) {
       $('dk-in').value = '';
       // Sport (10/11) : on dit à partir de quand ce match pourra être scellé, plutôt qu'une limite abstraite.
-      out.textContent = $('dk-cat').value === 'sport' && openAt === 'due' ? tooFar(target, max) : t('Échéance trop lointaine : {d} jours au plus.').replace('{d}', fmt(Math.floor(max / 24)));
+      out.textContent = $('dk-cat').value === 'sport' && openAt === 'due' ? tooFar(target, max) : t('Échéance trop lointaine : {d} jours au plus.').replace('{d}', fmt(Math.max(1, Math.floor(max * EP() / 864e5))));
       return;
     }
     $('dk-in').value = String(n);
-    const when = shown(new Date(Date.now() + n * EPOCH_MS));
-    out.textContent = Number.isSafeInteger(e) ? t('Ouverture vers {d} (époque {e} ; une époque dure environ une heure).').replace('{d}', when).replace('{e}', fmt(e + n)) : t('Ouverture vers {d}.').replace('{d}', when);
+    const when = shown(new Date(Date.now() + n * EP()));
+    out.textContent = Number.isSafeInteger(e) && EP() === 3600e3 ? t('Ouverture vers {d} (époque {e} ; une époque dure environ une heure).').replace('{d}', when).replace('{e}', fmt(e + n)) : t('Ouverture vers {d}.').replace('{d}', when);
   }
   $('dk-open-at').addEventListener('click', ev => {
     const b = ev.target.closest('button'); if (!b) return;
@@ -299,7 +300,7 @@
     if (!call || !/^\d{1,6}$/.test(price) || +price < 1) return say('Call invalide : vérifiez les champs.');
     if (!/^\d{1,5}$/.test(inN) || +inN < 1 || +inN > C().MAX_CALL_HORIZON_EPOCHS) {
       flag([dateId()]); const due = dueDate(), max = C().MAX_CALL_HORIZON_EPOCHS;
-      return say($('dk-cat').value === 'sport' && due && (due - Date.now()) / EPOCH_MS > max ? tooFar(due, max) : 'Échéance trop lointaine ou absente : vérifiez la date.');
+      return say($('dk-cat').value === 'sport' && due && (due - Date.now()) / EP() > max ? tooFar(due, max) : 'Échéance trop lointaine ou absente : vérifiez la date.');
     }
     if (call.payload.length > C().MAX_BACKUP_PAYLOAD) return say('Call trop long : raccourcissez le sujet.');
     // Modération (09/11) : mots interdits et calls incohérents avec le marché refusés avant toute signature.

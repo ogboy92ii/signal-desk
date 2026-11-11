@@ -545,7 +545,7 @@
           if (c && chain().phase(c, ep) === 'on-sale') {
             o.micro = c.price; ok = c.price === BigInt(o.price) * 1000000n; msg = ok ? 'Desk et prix vérifiés sur la chaîne' : 'Prix sur la chaîne différent du prix affiché.';
             // Avant de payer : l'âge du call et le mouvement de la paire depuis le scellé (le résultat se mesure depuis là).
-            const age = Math.max(0, (ep - c.sealedAtEpoch) * chain().EPOCH_MS), move = await pairMove(c.label, Date.now() - age);
+            const age = Math.max(0, (ep - c.sealedAtEpoch) * chain().epochMs(state.network)), move = await pairMove(c.label, Date.now() - age);
             if (!state || stale()) return;
             const h = new Intl.NumberFormat(document.documentElement.lang || 'fr', { maximumFractionDigits: 0 }).format(age / 3600e3);
             info = move === null ? t('Scellé il y a {h} h.').replace('{h}', h)

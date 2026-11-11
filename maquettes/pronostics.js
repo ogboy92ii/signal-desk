@@ -107,7 +107,8 @@
 
   // ---- Tableau on-chain (SignalForecasts) : remplace les exemples dès qu'une adresse est configurée ----
   const C = () => window.sdChain, W = () => window.sdWallet;
-  const netName = () => (W() && W().network()) || 'esmeralda';
+  const netName = () => (W() && W().network()) || (C() && C().view) || 'mainnet';
+  const EP = () => (C() && C().epochMs ? C().epochMs(netName()) : 3600e3); // 11/11 : époque ≈ 20 min sur mainnet, ≈ 1 h sur esmeralda
   let live = null; // { board, epoch, open, results, mine }
   // Ligue : ?ligue=<adresse du tableau>. Sans paramètre : le tableau public de Signal Desk.
   const PAGE_LG = document.body.classList.contains('page-lg');
@@ -118,7 +119,7 @@
   const mineOf = b => { const out = []; let keys = []; try { keys = Object.keys(localStorage).filter(k => k.startsWith('sd-fc-' + b.slice(10, 26) + '-')); } catch (e) {} for (const k of keys) { try { const v = JSON.parse(localStorage.getItem(k)); if (v && v.kind === 'forecast' && myKey && v.key === myKey) out.push(v); } catch (e) {} } return out; }; // audit K4 : une entrée corrompue n'arrête plus les autres
   // Heure de clôture d'une question : l'époque de la chaîne fait foi (≈ 1 h par époque) ; la date `close_utc` de
   // l'organisateur n'est retenue que si elle s'en écarte de moins de 2 h (audit S5 : sinon fausse clôture affichée).
-  const closeMs = (q, ep) => { const est = Date.now() + (q.close - ep) * 3600e3, u = Date.parse(q.meta && q.meta.close_utc); return Number.isFinite(u) && Math.abs(u - est) <= 2 * 3600e3 ? u : est; };
+  const closeMs = (q, ep) => { const est = Date.now() + (q.close - ep) * EP(), u = Date.parse(q.meta && q.meta.close_utc); return Number.isFinite(u) && Math.abs(u - est) <= 2 * 3600e3 ? u : est; };
   // Deux lectures simultanées n'en font qu'une (audit K3).
   // Une demande arrivée pendant une lecture en provoque une seconde à la fin (après une transaction, l'état est neuf).
   let liveRun = null, liveAgain = false;
@@ -232,7 +233,7 @@
     const net = netName(), canCreate = C() && C().leaguesLive(net);
     // En-tête de la page : le contrat est publié, plus de « les ligues ouvrent avec la publication ».
     // Avant le test de #pr-lg-body : pronostics.html n'a pas cette section et gardait le bandeau « Exemple ».
-    const hs = document.querySelector('p.status'); if (hs && canCreate && hs.lastChild) hs.lastChild.nodeValue = t('En ligne sur le testnet Tari');
+    const hs = document.querySelector('p.status'); if (hs && canCreate && hs.lastChild) hs.lastChild.nodeValue = t(net === 'mainnet' ? 'En ligne sur le mainnet Tari' : 'En ligne sur le testnet Tari');
     const box = $('pr-lg-body'); if (!box) return; box.replaceChildren();
     if (LEAGUE) {
       // Tableau de bord de la ligue (variante O3 « Tableau », choix de Soufian du 04/11) : en-tête, chiffres,
@@ -253,7 +254,7 @@
         ttl.appendChild(pen);
       }
       idb.append(el('p', 'lgd-by', t('Organisée par {k}').replace('{k}', b ? short(b.organizer) : '…') + (isOrg ? ' ' + t('(vous)') : '')), ttl);
-      const note = el('p', 'lgd-note'); note.append(el('span', 'lgd-live', t('En ligne sur le testnet Tari')), document.createTextNode(' · ' + t('Tout est public sur la blockchain : la ligue est privée par son lien, pas secrète.')));
+      const note = el('p', 'lgd-note'); note.append(el('span', 'lgd-live', t(netName() === 'mainnet' ? 'En ligne sur le mainnet Tari' : 'En ligne sur le testnet Tari')), document.createTextNode(' · ' + t('Tout est public sur la blockchain : la ligue est privée par son lien, pas secrète.')));
       idb.appendChild(note);
       const acts = el('div', 'lgd-acts');
       const copy = el('button', 'btn-sm', t("Copier le lien d'invitation")); copy.type = 'button';
@@ -621,7 +622,7 @@
     const date = el('input', 'lgd-in lgd-date'); date.type = 'datetime-local'; date.hidden = true; date.setAttribute('aria-label', t('Date de clôture (UTC)'));
     const info = el('span', 'lgd-hint');
     const closeIso = () => hours ? new Date(Date.now() + hours * 3600e3).toISOString() : date.value ? new Date(date.value + ':00Z').toISOString() : '';
-    const epochs = () => { const iso = closeIso(); return iso ? Math.ceil((Date.parse(iso) - Date.now()) / 3600e3) : 0; };
+    const epochs = () => { const iso = closeIso(); return iso ? Math.ceil((Date.parse(iso) - Date.now()) / EP()) : 0; };
     const upd = () => { const n = epochs(); info.textContent = n > 0 ? t('≈ {n} époques · ouverture des réponses pendant 48 h ensuite').replace('{n}', num(n)) : ''; };
     const chips = el('div', 'lgd-row');
     [[24, 'Dans 24 h'], [72, '3 jours'], [168, '1 semaine'], [0, 'Date précise']].forEach(([h, k]) => {

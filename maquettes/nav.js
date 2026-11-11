@@ -49,7 +49,7 @@
   let fcQs = null;
   function loadQs() {
     if (fcQs) return; fcQs = [];
-    const C = window.sdChain, net = (D() && D().network) || 'esmeralda';
+    const C = window.sdChain, net = (D() && D().network) || (C && C.view) || 'mainnet';
     if (!C || !C.forecastsLive || !C.forecastsLive(net)) return;
     Promise.all([C.readBoard(net), C.currentEpoch(net)]).then(([b, ep]) => {
       fcQs = (b ? b.questions : []).filter(x => ep < x.close && x.meta && typeof x.meta.q === 'string').map(x => ({ id: x.id, q: x.meta.q }));
@@ -168,4 +168,17 @@
     if (on && !open && document.querySelector('dialog[open]')) toast.showPopover();
     else if (!on && open) toast.hidePopover();
   }).observe(toast, { attributes: true, attributeFilter: ['class'] });
+
+  // ---- Réseau affiché (11/11) : Mainnet par défaut, Testnet au choix (contenu de démonstration). Un clic bascule et recharge. ----
+  (() => {
+    const C = window.sdChain, dock = document.getElementById('langdock');
+    if (!C || !C.view || !C.setView || !dock || !dock.closest('.sdnav') || !C.published('mainnet') || !C.published('esmeralda')) return;
+    const main = C.view === 'mainnet', b = document.createElement('button'), lab = document.createElement('span');
+    b.className = 'cmd-net' + (main ? '' : ' test'); b.type = 'button'; b.id = 'cmd-net';
+    lab.textContent = main ? 'Mainnet' : 'Testnet';
+    b.append(document.createElement('i'), lab);
+    b.title = main ? 'Mainnet → Testnet' : 'Testnet → Mainnet'; b.setAttribute('aria-label', b.title);
+    b.addEventListener('click', () => C.setView(main ? 'esmeralda' : 'mainnet'));
+    dock.parentNode.insertBefore(b, dock);
+  })();
 })();

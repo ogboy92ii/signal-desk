@@ -7,12 +7,13 @@
   // `template` stays empty until Signal Desk is published on that network: every write is refused.
   const NETWORKS = {
     // `forecasts.board` : adresse du tableau de pronostics ouvert par l'organisateur (vide = exemples).
-    esmeralda: { indexer: 'https://ootle-indexer-a.tari.com', template: 'template_a88bcb569681310009d9e33672d03c8299857211ad0ff5648752bce4bcdbc325', profiles: true, forecasts: { template: 'template_0035855954f95e2d51d486c75a712de004d16404d34c955e26795368c0c44f4f', v2: true, legacy: ['template_edf234c40754cf7ecd47d0b20ae0aa42c5f8c521b9a6f4ec694f137b80e63356', 'template_8b9724c7987bc35ae5caa1c52bfcea7f77d6a2f9d6568dc8a76fce8ece275816'], board: 'component_52c459f0c75989e45ecaec5d9ce39712ebc13ebd06dabf8f6005ed3813b5875a' }, follows: { template: 'template_4640483eff1282756f2b80ebec75cb60b45160666035154d085bddeff517efc2' },
+    esmeralda: { blocks: 80, blockMs: 45e3, indexer: 'https://ootle-indexer-a.tari.com', template: 'template_a88bcb569681310009d9e33672d03c8299857211ad0ff5648752bce4bcdbc325', profiles: true, forecasts: { template: 'template_0035855954f95e2d51d486c75a712de004d16404d34c955e26795368c0c44f4f', v2: true, legacy: ['template_edf234c40754cf7ecd47d0b20ae0aa42c5f8c521b9a6f4ec694f137b80e63356', 'template_8b9724c7987bc35ae5caa1c52bfcea7f77d6a2f9d6568dc8a76fce8ece275816'], board: 'component_52c459f0c75989e45ecaec5d9ce39712ebc13ebd06dabf8f6005ed3813b5875a' }, follows: { template: 'template_4640483eff1282756f2b80ebec75cb60b45160666035154d085bddeff517efc2' },
       // Desks officiels (robots du projet) : marque ✓ ajoutée par le site, jamais déduite du nom (audit F2).
       // Desks masqués par le modérateur (règles enfreintes) : adresses ajoutées ici à la main.
       hidden: [],
       official: ['component_7642b21d9fbb21239d2307e57f3cf27a5baf80e4ec3874d28e702ac97585d294', 'component_a922eec776f6121d3c5924bb05b26e90acd8a6aa3a16c72d60257b86e2f8f950', 'component_2b40c60e3c492a4063a97308bf65b2944fa893735c027abc411f0284446a0f60', 'component_3b91a9d07afce478a710ebdc5324c267a505cda426cd2f385959ea04bc9a9885'] },
-    mainnet: { indexer: '', template: '', forecasts: { template: '', board: '' }, follows: { template: '' } },
+    // Mainnet (mesuré le 11/11/2026) : une époque = 10 blocs L1 d'environ 2 min, soit ~20 min (esmeralda : 80 blocs, ~1 h).
+    mainnet: { blocks: 10, blockMs: 120e3, indexer: 'https://indexer-b.ootle.tari.com', template: 'template_65d9bbc931d306d2de9b235d7a0272f0dae05d061ed38f3c09467b972289b455', profiles: true, forecasts: { template: 'template_4e58dcb438e1d69b99b6991d61f33cd26bd9866c59cdf86ef23e9f493f170f49', v2: true, legacy: [], board: '' }, follows: { template: 'template_b622b0ada7ee233eabe33d7111c641ebdbd281e877bb217c6f32d287e250eecf' } },
   };
   const TARI = 'resource_0101010101010101010101010101010101010101010101010101010101010101';
   const MAX_FEE = '200000';
@@ -245,12 +246,17 @@
     if (Number.isSafeInteger(s.current_block_height)) heights.set(network, { epoch: s.current_epoch, height: s.current_block_height }); return s.current_epoch; };
   // Recette V2 (09/11) : une époque = 80 blocs L1 d'environ 45 s (281 blocs en 3 h 30 mesurés le 03/11). La hauteur de bloc
   // donne la position dans l'époque en cours : les comptes à rebours ne sont plus arrondis à l'heure entière.
-  const BLOCKS_PER_EPOCH = 80, BLOCK_MS = EPOCH_MS / BLOCKS_PER_EPOCH, heights = new Map();
+  const heights = new Map();
+  // Cadence propre à chaque réseau (NETWORKS.<réseau>.blocks / blockMs) ; réseau inconnu = valeurs d'esmeralda.
+  const blocksPerEpoch = network => (net(network) && net(network).blocks) || 80;
+  const blockMs = network => (net(network) && net(network).blockMs) || EPOCH_MS / 80;
+  const epochMs = network => blocksPerEpoch(network) * blockMs(network);
   /** Heure estimée (ms) du début de l'époque `e`, vue depuis l'époque courante `epoch` (lue par currentEpoch). */
   const epochStart = (network, e, epoch) => {
     const h = heights.get(network), now = Date.now();
-    if (h && h.epoch === epoch && Math.floor(h.height / BLOCKS_PER_EPOCH) === epoch) return now + (e * BLOCKS_PER_EPOCH - h.height) * BLOCK_MS;
-    return now - (epoch - e) * EPOCH_MS;
+    const per = blocksPerEpoch(network);
+    if (h && h.epoch === epoch && Math.floor(h.height / per) === epoch) return now + (e * per - h.height) * blockMs(network);
+    return now - (epoch - e) * epochMs(network);
   };
   // Decoded engine values: bytes are {"@cbor":"bytes",hex}, tags {"@cbor":"tag",tag,value}.
   const bytesHex = v => (v && v['@cbor'] === 'bytes' && HEX.test(v.hex) ? v.hex : null);
@@ -473,7 +479,7 @@
   /** R2 : tour drand du milieu de la fenêtre [at, at + window[ ; refus si l'horizon dépasse ce que la dérive permet. */
   const tlockRoundFor = (network, epoch, at, window) => {
     if (!(window >= 2) || at - epoch > tlockMaxHorizon(window)) throw new RangeError('horizon too long for the time lock (max ' + tlockMaxHorizon(window) + ' epochs)');
-    return roundAt(epochStart(network, at + Math.floor(window / 2), epoch) + EPOCH_MS / 2);
+    return roundAt(epochStart(network, at + Math.floor(window / 2), epoch) + epochMs(network) / 2);
   };
   const tlockOpensAt = call => { const r = call && tlockRound(call.tlock); return r === null ? null : roundTime(r); };
   /**
@@ -1107,6 +1113,20 @@
     return (await plain([method(deskAddr, 'withdraw', [arg.uint(amountMicro)])], onWaiting)).id;
   }
 
+  // Réseau affiché : ?net=mainnet|esmeralda (mémorisé), sinon le dernier choix, sinon mainnet. Jamais un réseau sans contrat publié.
+  const VIEW = (() => {
+    const ok = n => typeof n === 'string' && !!(NETWORKS[n] && NETWORKS[n].template);
+    let q = null, s = null;
+    try { q = new URLSearchParams(location.search).get('net'); } catch (e) {}
+    try { if (ok(q)) localStorage.setItem('sd-net', q); s = localStorage.getItem('sd-net'); } catch (e) {}
+    return ok(q) ? q : ok(s) ? s : 'mainnet';
+  })();
+  const setView = n => {
+    if (!(NETWORKS[n] && NETWORKS[n].template) || n === VIEW) return;
+    try { localStorage.setItem('sd-net', n); } catch (e) {}
+    const u = new URL(location.href); u.searchParams.delete('net'); location.href = u.href.split('#')[0];
+  };
+
   window.sdChain = {
     MAX_REVEAL_HORIZON_EPOCHS,
     published: network => !!(net(network) && net(network).template),
@@ -1114,7 +1134,9 @@
     isOfficial: (network, addr) => !!(net(network) && (net(network).official || []).includes(addr)),
     isCanonical, parseCall, phase, stats, saleState, settleable,
     MAX_BACKUP_PAYLOAD, privateSecrets, findDesks, tlockOpensAt, openTlock, lockedCall, revealFromTlock, revealInstruction, revealMany,
-    revealedPayloads, setDeskProfile, setDeskPicture, followGraph, EPOCH_MS, epochStart, MAX_CALL_HORIZON_EPOCHS, tlockMaxHorizon,
+    revealedPayloads, setDeskProfile, setDeskPicture, followGraph, EPOCH_MS, epochMs, epochStart, MAX_CALL_HORIZON_EPOCHS, tlockMaxHorizon,
+    // Réseau AFFICHÉ aux visiteurs (lectures publiques) : mainnet par défaut, testnet au choix (?net= ou sélecteur de la barre).
+    view: VIEW, setView,
     clearReads, sealPrepare, deliverInstructions, buyInstructions, openDeskInstruction, deskProfileInstruction, DELIVER_BATCH, deliverMany, refundAll,
     boardOpenInstruction, askInstruction, resolveInstruction, readBoardRaw,
     // Desks du template courant avec carte publique (set_profile / set_picture).

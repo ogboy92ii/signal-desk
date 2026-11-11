@@ -2023,3 +2023,9 @@ section.pf-top:has(>.pf-tabs-top:not([hidden])){padding-top:calc(var(--pf-tabs-t
 .cmd-panel li.act button:focus-visible{outline:2px solid var(--lilac);outline-offset:2px}
 .sd-rules{margin:12px 0 0;font-size:11.5px;line-height:1.5;color:var(--fg3)}
 .pf-nosale{font-size:13px;color:var(--fg3);align-self:center}
+/* Réseau affiché (11/11) : bouton Mainnet / Testnet de la barre, à gauche de la langue. */
+.cmd-net{display:inline-flex;align-items:center;gap:6px;height:40px;padding:0 12px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.04);color:var(--fg);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap;flex:none}
+.cmd-net i{width:7px;height:7px;border-radius:50%;background:var(--up)}
+.cmd-net.test i{background:#e0a94a}
+.cmd-net:hover{background:rgba(255,255,255,.08)}
+@media (max-width:760px){.cmd-net{padding:0 9px}.cmd-net span{display:none}}
